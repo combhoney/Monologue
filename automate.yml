@@ -1,0 +1,97 @@
+name: YouTube Monologue Automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_upload:
+        description: "Set to 'true' to test without uploading or deleting Link/GIF"
+        required: false
+        default: "false"
+      setup_cache_only:
+        description: "Set to 'true' ONLY to pre-install Qwen3-TTS permanently in Kaggle account"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: youtube-monologue-pipeline
+  cancel-in-progress: false
+
+jobs:
+  generate-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install FFmpeg, espeak-ng, Fonts and rclone
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng fonts-montserrat fonts-dejavu-core rclone
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Pre-install Qwen3-TTS into Kaggle Account (One-Time Setup)
+        if: github.event.inputs.setup_cache_only == 'true'
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: python scripts/setup_kaggle_cache.py
+
+      - name: Run Monologue Automation Pipeline
+        if: github.event.inputs.setup_cache_only != 'true'
+        env:
+          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
+          OPENROUTER_MODELS: ${{ secrets.OPENROUTER_MODELS }}
+          OPENROUTER_FREE_ONLY: ${{ vars.OPENROUTER_FREE_ONLY || 'false' }}
+          TTS_ENGINE: ${{ vars.TTS_ENGINE || 'auto' }}
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          QWEN_SPEAKER: ${{ vars.QWEN_SPEAKER || 'Ryan' }}
+          QWEN_INSTRUCT: ${{ vars.QWEN_INSTRUCT }}
+          UPLOAD_TO_YOUTUBE: ${{ secrets.UPLOAD_TO_YOUTUBE || 'false' }}
+          CLEANUP_AFTER_GDRIVE: ${{ vars.CLEANUP_AFTER_GDRIVE || 'true' }}
+          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
+          RCLONE_REMOTE_NAME: ${{ vars.RCLONE_REMOTE_NAME }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_PRIVACY_STATUS: ${{ vars.YOUTUBE_PRIVACY_STATUS || 'public' }}
+          YOUTUBE_CATEGORY_ID: ${{ vars.YOUTUBE_CATEGORY_ID || '22' }}
+          EDGE_TTS_VOICE: ${{ vars.EDGE_TTS_VOICE || 'en-US-AndrewMultilingualNeural' }}
+          EDGE_TTS_RATE: ${{ vars.EDGE_TTS_RATE || '-4%' }}
+          SPECTRUM_STYLE: ${{ vars.SPECTRUM_STYLE || 'bars' }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+          SKIP_UPLOAD: ${{ github.event.inputs.skip_upload || 'false' }}
+        run: python main.py
+
+      - name: Commit and push updated Link.txt and Gif folder
+        if: success() && (github.event.inputs.setup_cache_only != 'true') && (github.event.inputs.skip_upload != 'true')
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Link.txt Gif/
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: remove processed YouTube link and used GIF [skip ci]"
+            git pull --rebase origin "${{ github.ref_name }}"
+            git push
+          else
+            echo "No changes to commit."
+          fi
