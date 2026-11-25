@@ -50,7 +50,7 @@ jobs:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-        run: python scripts/setup_kaggle_cache.py
+        run: python -u scripts/setup_kaggle_cache.py
 
       - name: Run Monologue Automation Pipeline
         if: github.event.inputs.setup_cache_only != 'true'
@@ -65,7 +65,7 @@ jobs:
           QWEN_SPEAKER: ${{ vars.QWEN_SPEAKER || 'Ryan' }}
           QWEN_INSTRUCT: ${{ vars.QWEN_INSTRUCT }}
           UPLOAD_TO_YOUTUBE: ${{ secrets.UPLOAD_TO_YOUTUBE || 'false' }}
-          CLEANUP_AFTER_GDRIVE: ${{ vars.CLEANUP_AFTER_GDRIVE || 'true' }}
+          CLEANUP_AFTER_GDRIVE: ${{ vars.CLEANUP_AFTER_GDRIVE || 'false' }}
           RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
           RCLONE_REMOTE_NAME: ${{ vars.RCLONE_REMOTE_NAME }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
@@ -81,7 +81,7 @@ jobs:
           PROXY_URL: ${{ secrets.PROXY_URL }}
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
           SKIP_UPLOAD: ${{ github.event.inputs.skip_upload || 'false' }}
-        run: python main.py
+        run: python -u main.py
 
       - name: Commit and push updated Link.txt
         if: success() && (github.event.inputs.setup_cache_only != 'true') && (github.event.inputs.skip_upload != 'true')
