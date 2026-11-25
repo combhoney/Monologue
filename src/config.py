@@ -35,11 +35,6 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 
 def load_openrouter_keys() -> list[str]:
-    """
-    একাধিক OpenRouter API Key লোড করে (প্রতি লাইনে একটি করে এন্টার দেওয়া)।
-    নিরাপত্তার জন্য প্রথমে GitHub Secret (OPENROUTER_API_KEYS) থেকে নেবে,
-    না থাকলে লোকাল openrouter_keys.txt ফাইল চেক করবে।
-    """
     raw = os.getenv("OPENROUTER_API_KEYS", "").strip()
     if not raw and LOCAL_KEYS_FILE.exists():
         raw = LOCAL_KEYS_FILE.read_text(encoding="utf-8")
@@ -63,9 +58,6 @@ def load_openrouter_keys() -> list[str]:
 
 
 def load_supadata_keys() -> list[str]:
-    """
-    একাধিক Supadata API Key লোড করে (প্রতি লাইনে একটি করে এন্টার দেওয়া)।
-    """
     raw = os.getenv("SUPADATA_API_KEYS", "").strip()
     keys: list[str] = []
     for line in raw.splitlines():
@@ -122,7 +114,8 @@ FFMPEG_CRF = env_int("FFMPEG_CRF", 22)
 BG_DELETE_THRESHOLD_SEC = env_float("BG_DELETE_THRESHOLD_SEC", 60.0)
 ALLOW_BG_LOOP = env_bool("ALLOW_BG_LOOP", True)
 
-# --- TTS Config (Permanent Kaggle Account Cache + Dual T4 GPU Qwen3-TTS) ---
+# --- TTS & Audio Pacing Config ---
+AUDIO_SPEED = env_float("AUDIO_SPEED", 1.12)  # ১.১২x ফাস্ট, পিচ অপরিবর্তিত থাকবে
 TTS_ENGINE = env_str("TTS_ENGINE", "auto")
 KAGGLE_USERNAME = env_str("KAGGLE_USERNAME", "")
 KAGGLE_KEY = env_str("KAGGLE_KEY", "")
@@ -135,13 +128,13 @@ QWEN_TTS_MODEL = env_str("QWEN_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
 QWEN_SPEAKER = env_str("QWEN_SPEAKER", "Ryan")
 QWEN_INSTRUCT = env_str(
     "QWEN_INSTRUCT",
-    "Deep, calm, emotionally gripping philosophical male narrator speaking with warm authority and natural pauses.",
+    "Deep, confident, gripping philosophical male narrator speaking with warm authority, crisp pacing, and engaging momentum.",
 )
 
 EDGE_TTS_VOICE = env_str("EDGE_TTS_VOICE", "en-US-AndrewMultilingualNeural")
-EDGE_TTS_RATE = env_str("EDGE_TTS_RATE", "-4%")
+EDGE_TTS_RATE = env_str("EDGE_TTS_RATE", "+8%")
 KOKORO_VOICE = env_str("KOKORO_VOICE", "am_michael")
-KOKORO_SPEED = env_float("KOKORO_SPEED", 0.96)
+KOKORO_SPEED = env_float("KOKORO_SPEED", 1.08)
 
 # --- Transcript & Network Config ---
 PROXY_URL = env_str("PROXY_URL", "")
