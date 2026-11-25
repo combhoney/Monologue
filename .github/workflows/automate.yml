@@ -62,6 +62,8 @@ jobs:
           SUPADATA_API_KEYS: ${{ secrets.SUPADATA_API_KEYS }}
           TTS_ENGINE: ${{ vars.TTS_ENGINE || 'auto' }}
           AUDIO_SPEED: ${{ vars.AUDIO_SPEED || '1.12' }}
+          SUBTITLE_ENABLED: ${{ vars.SUBTITLE_ENABLED || 'true' }}
+          SUBTITLE_MODEL: ${{ vars.SUBTITLE_MODEL || 'base.en' }}
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
