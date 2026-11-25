@@ -72,15 +72,20 @@ def _rclone_session():
         yield remote_name, conf_file
 
 
-# ==============================================================================
-# গেমপ্লে ব্যাকগ্রাউন্ড ভিডিও ম্যানেজমেন্ট (লিস্ট, ডাউনলোড ও ট্রাশ ছাড়া স্থায়ী ডিলিট)
-# ==============================================================================
 def list_bg_videos() -> list[dict]:
     bg_folder_id = extract_folder_id(GDRIVE_BG_FOLDER_ID)
     if not bg_folder_id:
         raise ValueError("GDRIVE_BG_FOLDER_ID সিক্রেট সেট করা নেই!")
 
     with _rclone_session() as (remote_name, conf_file):
+        conf_txt = conf_file.read_text(encoding="utf-8")
+        if re.search(r"^\s*scope\s*=\s*drive\.file\b", conf_txt, re.MULTILINE):
+            raise RuntimeError(
+                "আপনার rclone.conf-এ 'scope = drive.file' দেওয়া আছে! "
+                "এতে ব্রাউজার থেকে আপলোড করা গেমপ্লে ভিডিও rclone দেখতে পায় না। "
+                "rclone config-এ scope = 1 (drive) দিয়ে নতুন RCLONE_CONFIG দিন।"
+            )
+
         cmd = [
             "rclone",
             "lsjson",
@@ -106,7 +111,7 @@ def list_bg_videos() -> list[dict]:
             )
         ]
 
-    print(f"[GDrive-BG] ব্যাকগ্রাউন্ড ফোল্ডারে মোট {len(videos)}টি গেমপ্লে ভিডিও পাওয়া গেছে।")
+    print(f"[GDrive-BG] ব্যাকগ্রাউন্ড ফোল্ডারে মোট {len(videos)}টি গেমপ্লে ভিডিও পাওয়া গেছে।", flush=True)
     return videos
 
 
@@ -124,19 +129,22 @@ def download_bg_video(remote_filename: str, dest_path: Path) -> Path:
             bg_folder_id,
             "--config",
             str(conf_file),
+            "--multi-thread-streams",
+            "4",
+            "--stats",
+            "10s",
+            "--stats-one-line",
+            "-v",
         ]
-        print(f"[GDrive-BG] গেমপ্লে ভিডিও ডাউনলোড হচ্ছে: {remote_filename} ...")
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        print(f"[GDrive-BG] গেমপ্লে ভিডিও ডাউনলোড হচ্ছে: {remote_filename} ...", flush=True)
+        proc = subprocess.run(cmd)
         if proc.returncode != 0 or not dest_path.exists():
-            raise RuntimeError(f"'{remote_filename}' ডাউনলোড ব্যর্থ:\n{proc.stderr}")
+            raise RuntimeError(f"'{remote_filename}' ডাউনলোড ব্যর্থ (code={proc.returncode})")
 
     return dest_path
 
 
 def permanently_delete_bg_video(remote_filename: str) -> None:
-    """
-    Google Drive থেকে গেমপ্লে ভিডিও ট্রাশে না পাঠিয়েই স্থায়ীভাবে ডিলিট করে।
-    """
     bg_folder_id = extract_folder_id(GDRIVE_BG_FOLDER_ID)
     with _rclone_session() as (remote_name, conf_file):
         cmd = [
@@ -155,12 +163,9 @@ def permanently_delete_bg_video(remote_filename: str) -> None:
                 f"'{remote_filename}' স্থায়ীভাবে ডিলিট করতে ব্যর্থ "
                 f"(rclone scope='drive' আছে কি না দেখুন):\n{proc.stderr}"
             )
-    print(f"[Cleanup-GDrive] ট্রাশ ছাড়াই স্থায়ীভাবে ডিলিট হয়েছে: {remote_filename}")
+    print(f"[Cleanup-GDrive] ট্রাশ ছাড়াই স্থায়ীভাবে ডিলিট হয়েছে: {remote_filename}", flush=True)
 
 
-# ==============================================================================
-# ফাইনাল রিভিউ ভিডিও, থাম্বনেইল ও TXT আপলোড (UPLOAD_TO_YOUTUBE=false হলে)
-# ==============================================================================
 def _safe_filename(name: str, max_len: int = 55) -> str:
     cleaned = re.sub(r'[\\/:*?"<>|\r\n]+', "", name).strip()
     cleaned = re.sub(r"\s+", "_", cleaned)
@@ -248,19 +253,29 @@ def upload_to_gdrive(
             f"{remote_name}:{safe_base}",
             "--config",
             str(conf_file),
+            "--drive-chunk-size",
+            "128M",
             "--transfers",
             "4",
+            "--stats",
+            "10s",
+            "--stats-one-line",
+            "--timeout",
+            "5m",
+            "--contimeout",
+            "60s",
             "-v",
         ]
         if folder_id:
             cmd.extend(["--drive-root-folder-id", folder_id])
 
         print(
-            f"[GDrive-Upload] রিভিউ ফাইল আপলোড হচ্ছে -> Folder ID: '{folder_id or 'Root'}', Subfolder: '{safe_base}'"
+            f"[GDrive-Upload] রিভিউ ফাইল আপলোড হচ্ছে -> Folder ID: '{folder_id or 'Root'}', Subfolder: '{safe_base}'",
+            flush=True,
         )
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd)
         if proc.returncode != 0:
-            raise RuntimeError(f"rclone আপলোড ব্যর্থ:\n{proc.stderr}\n{proc.stdout}")
+            raise RuntimeError(f"rclone আপলোড ব্যর্থ (code={proc.returncode})")
 
-    print(f"[GDrive-Upload] ভিডিও, থাম্বনেইল ও TXT সফলভাবে Google Drive-এ সেভ হয়েছে! ({safe_base})")
+    print(f"[GDrive-Upload] ভিডিও, থাম্বনেইল ও TXT সফলভাবে Google Drive-এ সেভ হয়েছে! ({safe_base})", flush=True)
     return safe_base
