@@ -35,6 +35,11 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 
 def load_openrouter_keys() -> list[str]:
+    """
+    একাধিক OpenRouter API Key লোড করে (প্রতি লাইনে একটি করে এন্টার দেওয়া)।
+    নিরাপত্তার জন্য প্রথমে GitHub Secret (OPENROUTER_API_KEYS) থেকে নেবে,
+    না থাকলে লোকাল openrouter_keys.txt ফাইল চেক করবে।
+    """
     raw = os.getenv("OPENROUTER_API_KEYS", "").strip()
     if not raw and LOCAL_KEYS_FILE.exists():
         raw = LOCAL_KEYS_FILE.read_text(encoding="utf-8")
@@ -54,6 +59,23 @@ def load_openrouter_keys() -> list[str]:
             "কোনো OpenRouter API Key পাওয়া যায়নি! "
             "GitHub Secret 'OPENROUTER_API_KEYS'-এ একটার নিচে একটা Key দিন।"
         )
+    return keys
+
+
+def load_supadata_keys() -> list[str]:
+    """
+    একাধিক Supadata API Key লোড করে (প্রতি লাইনে একটি করে এন্টার দেওয়া)।
+    """
+    raw = os.getenv("SUPADATA_API_KEYS", "").strip()
+    keys: list[str] = []
+    for line in raw.splitlines():
+        cleaned = line.strip()
+        if not cleaned or cleaned.startswith("#"):
+            continue
+        for part in cleaned.split(","):
+            k = part.strip()
+            if k and k not in keys:
+                keys.append(k)
     return keys
 
 
