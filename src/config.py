@@ -114,8 +114,19 @@ FFMPEG_CRF = env_int("FFMPEG_CRF", 22)
 BG_DELETE_THRESHOLD_SEC = env_float("BG_DELETE_THRESHOLD_SEC", 60.0)
 ALLOW_BG_LOOP = env_bool("ALLOW_BG_LOOP", True)
 
+# --- Subtitle Config (Animated Word-Synced Pop-Up Captions) ---
+SUBTITLE_ENABLED = env_bool("SUBTITLE_ENABLED", True)
+SUBTITLE_MODEL = env_str("SUBTITLE_MODEL", "base.en")
+SUBTITLE_MAX_WORDS = env_int("SUBTITLE_MAX_WORDS", 3)
+SUBTITLE_FONT_SIZE = env_int("SUBTITLE_FONT_SIZE", 68)
+SUBTITLE_MARGIN_V = env_int("SUBTITLE_MARGIN_V", 125)
+
+# --- Thumbnail Config (80% Blur + Dark Exposure + Single Modern Light Color) ---
+THUMBNAIL_BLUR_RADIUS = env_int("THUMBNAIL_BLUR_RADIUS", 38)
+THUMBNAIL_BRIGHTNESS = env_float("THUMBNAIL_BRIGHTNESS", 0.38)
+
 # --- TTS & Audio Pacing Config ---
-AUDIO_SPEED = env_float("AUDIO_SPEED", 1.12)  # ১.১২x ফাস্ট, পিচ অপরিবর্তিত থাকবে
+AUDIO_SPEED = env_float("AUDIO_SPEED", 1.12)
 TTS_ENGINE = env_str("TTS_ENGINE", "auto")
 KAGGLE_USERNAME = env_str("KAGGLE_USERNAME", "")
 KAGGLE_KEY = env_str("KAGGLE_KEY", "")
