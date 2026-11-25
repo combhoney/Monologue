@@ -8,6 +8,7 @@ import soundfile as sf
 from src.config import (
     ALLOW_BG_LOOP,
     BG_DELETE_THRESHOLD_SEC,
+    FFMPEG_CRF,
     FFMPEG_PRESET,
     VIDEO_FPS,
     VIDEO_HEIGHT,
@@ -38,9 +39,6 @@ def _get_video_duration(video_path: Path) -> float:
 
 
 def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path) -> dict:
-    """
-    Google Drive থেকে রেনডম গেমপ্লে ভিডিও ডাউনলোড করে যতক্ষণ না অডিওর ডিউরেশন পূরণ হয়।
-    """
     remote_videos = list_bg_videos()
     if not remote_videos:
         raise RuntimeError("Google Drive-এর গেমপ্লে ফোল্ডারে কোনো ভিডিও পাওয়া যায়নি!")
@@ -63,7 +61,7 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
         download_bg_video(remote_name, local_path)
         full_dur = _get_video_duration(local_path)
         if full_dur <= 0.5:
-            print(f"[Video] খুব ছোট/নষ্ট ভিডিও স্কিপ করা হলো: {remote_name} ({full_dur:.2f}s)")
+            print(f"[Video] খুব ছোট/নষ্ট ভিডিও স্কিপ করা হলো: {remote_name} ({full_dur:.2f}s)", flush=True)
             continue
 
         use_dur = min(full_dur, remaining)
@@ -81,7 +79,8 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
 
         print(
             f"[Video] ক্লিপ যুক্ত হলো: '{remote_name}' | "
-            f"মূল দৈর্ঘ্য: {full_dur:.1f}s | ব্যবহৃত: {use_dur:.1f}s | বাকি অডিও: {max(0.0, remaining):.1f}s"
+            f"মূল দৈর্ঘ্য: {full_dur:.1f}s | ব্যবহৃত: {use_dur:.1f}s | বাকি অডিও: {max(0.0, remaining):.1f}s",
+            flush=True,
         )
 
     if remaining > 0.5:
@@ -92,7 +91,8 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
             )
         print(
             f"[Video] সতর্কতা: ফোল্ডারের সব ভিডিও মিলিয়েও {remaining:.1f}s কম পড়েছে। "
-            "ALLOW_BG_LOOP=true থাকায় বাছাইকৃত ক্লিপ থেকে বাকি অংশ পূরণ করা হচ্ছে..."
+            "ALLOW_BG_LOOP=true থাকায় বাছাইকৃত ক্লিপ থেকে বাকি অংশ পূরণ করা হচ্ছে...",
+            flush=True,
         )
         base_segments = list(segments)
         while remaining > 0.5:
@@ -111,7 +111,6 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
                 usage_totals[seg["remote_name"]] += use_dur
                 remaining -= use_dur
 
-    # ডিলিট রুল যাচাই: সম্পূর্ণ ব্যবহৃত OR ১ মিনিটের (> 60s) বেশি ব্যবহৃত হলে ডিলিট
     to_delete: list[dict] = []
     to_keep: list[dict] = []
 
@@ -127,8 +126,9 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
             to_keep.append(entry)
 
     print(
-        f"[Video] ডিলিট প্ল্যান -> ডিলিট হবে: {[d['remote_name'] for d in to_delete]} | "
-        f"অক্ষত থাকবে (<=1m ব্যবহৃত): {[k['remote_name'] for k in to_keep]}"
+        f"[Video] ডিলিট প্ল্যান (শুধু লাইভ আপলোডে প্রযোজ্য) -> ডিলিটযোগ্য: {[d['remote_name'] for d in to_delete]} | "
+        f"অক্ষত (<=1m ব্যবহৃত): {[k['remote_name'] for k in to_keep]}",
+        flush=True,
     )
 
     return {
@@ -149,8 +149,9 @@ def create_gameplay_video(audio_wav: Path, output_mp4: Path, bg_tmp_dir: Path) -
     segments = plan["segments"]
 
     print(
-        f"[Video] FFmpeg দিয়ে সরাসরি ভিডিও তৈরি হচ্ছে: {w}x{h} @ {fps}fps | "
-        f"অডিও দৈর্ঘ্য: {audio_dur:.2f}s | গেমপ্লে ক্লিপ: {len(segments)}টি"
+        f"[Video] FFmpeg দিয়ে স্টুডিও-মাস্টারড ভিডিও তৈরি হচ্ছে: {w}x{h} @ {fps}fps "
+        f"(preset={FFMPEG_PRESET}, crf={FFMPEG_CRF}) | অডিও দৈর্ঘ্য: {audio_dur:.2f}s | ক্লিপ: {len(segments)}টি",
+        flush=True,
     )
 
     cmd = ["ffmpeg", "-y", "-nostdin"]
@@ -171,10 +172,19 @@ def create_gameplay_video(audio_wav: Path, output_mp4: Path, bg_tmp_dir: Path) -
     audio_idx = len(segments)
     cmd.extend(["-i", str(audio_wav)])
 
-    filter_complex = (
+    video_chain = (
         ";".join(filter_parts)
         + f";{''.join(concat_inputs)}concat=n={len(segments)}:v=1:a=0,format=yuv420p[outv]"
     )
+    # স্টুডিও ভয়েস মাস্টারিং: লো-নয়েজ কাট + ওয়ার্ম EQ + YouTube -14 LUFS + 48kHz
+    audio_chain = (
+        f";[{audio_idx}:a]highpass=f=70,"
+        "equalizer=f=180:t=q:w=1.2:g=2.0,"
+        "equalizer=f=3500:t=q:w=1.5:g=1.5,"
+        "loudnorm=I=-14:TP=-1.5:LRA=9,"
+        "aresample=48000[outa]"
+    )
+    filter_complex = video_chain + audio_chain
 
     cmd.extend([
         "-filter_complex",
@@ -182,19 +192,23 @@ def create_gameplay_video(audio_wav: Path, output_mp4: Path, bg_tmp_dir: Path) -
         "-map",
         "[outv]",
         "-map",
-        f"{audio_idx}:a",
+        "[outa]",
         "-c:v",
         "libx264",
         "-preset",
         FFMPEG_PRESET,
         "-crf",
-        "20",
+        str(FFMPEG_CRF),
         "-pix_fmt",
         "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
-        "192k",
+        "320k",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
         "-shortest",
         "-movflags",
         "+faststart",
@@ -209,5 +223,5 @@ def create_gameplay_video(audio_wav: Path, output_mp4: Path, bg_tmp_dir: Path) -
         raise RuntimeError("আউটপুট ভিডিও ফাইল তৈরি হয়নি।")
 
     size_mb = output_mp4.stat().st_size / (1024 * 1024)
-    print(f"[Video] ভিডিও তৈরি সম্পন্ন: {output_mp4.name} ({size_mb:.2f} MB)")
+    print(f"[Video] ভিডিও তৈরি সম্পন্ন: {output_mp4.name} ({size_mb:.2f} MB)", flush=True)
     return plan
