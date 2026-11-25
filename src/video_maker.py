@@ -7,6 +7,7 @@ import soundfile as sf
 
 from src.config import (
     ALLOW_BG_LOOP,
+    AUDIO_SPEED,
     BG_DELETE_THRESHOLD_SEC,
     FFMPEG_CRF,
     FFMPEG_PRESET,
@@ -35,6 +36,47 @@ def _get_video_duration(video_path: Path) -> float:
     dur = float((data.get("format") or {}).get("duration", 0.0))
     if dur <= 0:
         raise RuntimeError(f"ভিডিওটির ডিউরেশন সঠিক নয়: {video_path.name}")
+    return dur
+
+
+def _prepare_mastered_audio(raw_wav: Path, mastered_wav: Path) -> float:
+    """
+    অডিওর পিচ ঠিক রেখে গতি হালকা ফাস্ট (AUDIO_SPEED) করে এবং
+    YouTube Studio Mastering (EQ + -14 LUFS + 48kHz) প্রয়োগ করে।
+    """
+    speed = max(0.5, min(2.0, float(AUDIO_SPEED)))
+    filters = []
+    if abs(speed - 1.0) > 0.005:
+        filters.append(f"atempo={speed:.4f}")
+    filters.extend([
+        "highpass=f=70",
+        "equalizer=f=180:t=q:w=1.2:g=2.0",
+        "equalizer=f=3500:t=q:w=1.5:g=1.5",
+        "loudnorm=I=-14:TP=-1.5:LRA=9",
+        "aresample=48000",
+    ])
+    af_chain = ",".join(filters)
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(raw_wav),
+        "-af",
+        af_chain,
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        str(mastered_wav),
+    ]
+    print(f"[Audio] স্টুডিও মাস্টারিং ও স্পিড ({speed:.2f}x) প্রয়োগ হচ্ছে...", flush=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"FFmpeg অডিও মাস্টারিং ব্যর্থ:\n{proc.stderr[-1500:]}")
+
+    dur = float(sf.info(str(mastered_wav)).duration)
+    print(f"[Audio] ফাইনাল অডিও প্রস্তুত: {dur:.2f} সেকেন্ড (48kHz Stereo)", flush=True)
     return dur
 
 
@@ -142,14 +184,17 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
 
 def create_gameplay_video(audio_wav: Path, output_mp4: Path, bg_tmp_dir: Path) -> dict:
     output_mp4.parent.mkdir(parents=True, exist_ok=True)
+    bg_tmp_dir.mkdir(parents=True, exist_ok=True)
     w, h, fps = VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS
 
-    audio_dur = float(sf.info(str(audio_wav)).duration)
+    mastered_wav = bg_tmp_dir / "mastered_voiceover.wav"
+    audio_dur = _prepare_mastered_audio(audio_wav, mastered_wav)
+
     plan = _select_and_download_gameplay_clips(audio_dur, bg_tmp_dir)
     segments = plan["segments"]
 
     print(
-        f"[Video] FFmpeg দিয়ে স্টুডিও-মাস্টারড ভিডিও তৈরি হচ্ছে: {w}x{h} @ {fps}fps "
+        f"[Video] FFmpeg দিয়ে ভিডিও তৈরি হচ্ছে: {w}x{h} @ {fps}fps "
         f"(preset={FFMPEG_PRESET}, crf={FFMPEG_CRF}) | অডিও দৈর্ঘ্য: {audio_dur:.2f}s | ক্লিপ: {len(segments)}টি",
         flush=True,
     )
@@ -170,21 +215,12 @@ def create_gameplay_video(audio_wav: Path, output_mp4: Path, bg_tmp_dir: Path) -
         concat_inputs.append(f"[v{idx}]")
 
     audio_idx = len(segments)
-    cmd.extend(["-i", str(audio_wav)])
+    cmd.extend(["-i", str(mastered_wav)])
 
-    video_chain = (
+    filter_complex = (
         ";".join(filter_parts)
         + f";{''.join(concat_inputs)}concat=n={len(segments)}:v=1:a=0,format=yuv420p[outv]"
     )
-    # স্টুডিও ভয়েস মাস্টারিং: লো-নয়েজ কাট + ওয়ার্ম EQ + YouTube -14 LUFS + 48kHz
-    audio_chain = (
-        f";[{audio_idx}:a]highpass=f=70,"
-        "equalizer=f=180:t=q:w=1.2:g=2.0,"
-        "equalizer=f=3500:t=q:w=1.5:g=1.5,"
-        "loudnorm=I=-14:TP=-1.5:LRA=9,"
-        "aresample=48000[outa]"
-    )
-    filter_complex = video_chain + audio_chain
 
     cmd.extend([
         "-filter_complex",
@@ -192,7 +228,7 @@ def create_gameplay_video(audio_wav: Path, output_mp4: Path, bg_tmp_dir: Path) -
         "-map",
         "[outv]",
         "-map",
-        "[outa]",
+        f"{audio_idx}:a",
         "-c:v",
         "libx264",
         "-preset",
