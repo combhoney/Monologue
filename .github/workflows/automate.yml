@@ -58,6 +58,7 @@ jobs:
           OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
           OPENROUTER_MODELS: ${{ secrets.OPENROUTER_MODELS }}
           OPENROUTER_FREE_ONLY: ${{ vars.OPENROUTER_FREE_ONLY || 'false' }}
+          SUPADATA_API_KEYS: ${{ secrets.SUPADATA_API_KEYS }}
           TTS_ENGINE: ${{ vars.TTS_ENGINE || 'auto' }}
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
