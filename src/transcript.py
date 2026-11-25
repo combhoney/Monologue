@@ -1,14 +1,15 @@
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import requests
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.proxies import GenericProxyConfig
 
-from src.config import PROXY_URL, YOUTUBE_COOKIES
-
+from src.config import PROXY_URL, YOUTUBE_COOKIES, load_supadata_keys
 
 PREFERRED_LANGUAGES = ["hi", "hi-IN", "hi-Latn", "en", "en-IN", "en-US", "en-GB"]
 
@@ -47,6 +48,36 @@ def _clean_transcript_text(text: str) -> str:
     return text
 
 
+def _fetch_via_supadata(video_url: str, video_id: str, keys: list[str]) -> dict:
+    errors: list[str] = []
+    for idx, key in enumerate(keys, start=1):
+        print(f"[Transcript] Supadata API দিয়ে চেষ্টা চলছে (Key#{idx})...")
+        try:
+            resp = requests.get(
+                "https://api.supadata.ai/v1/youtube/transcript",
+                params={"url": video_url, "text": "true"},
+                headers={"x-api-key": key},
+                timeout=60,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                text = _clean_transcript_text(str(data.get("content", "")))
+                if text:
+                    return {
+                        "video_id": video_id,
+                        "language": str(data.get("lang", "auto")),
+                        "text": text,
+                        "source": f"supadata (Key#{idx})",
+                    }
+                errors.append(f"Key#{idx}: খালি ট্রান্সক্রিপ্ট")
+            else:
+                errors.append(f"Key#{idx}: HTTP {resp.status_code} - {resp.text[:180]}")
+        except Exception as exc:
+            errors.append(f"Key#{idx}: {exc}")
+
+    raise RuntimeError("Supadata API ব্যর্থ হয়েছে: " + " | ".join(errors))
+
+
 def _fetch_via_transcript_api(video_id: str) -> dict:
     if PROXY_URL:
         api = YouTubeTranscriptApi(
@@ -58,7 +89,6 @@ def _fetch_via_transcript_api(video_id: str) -> dict:
     transcript_list = api.list(video_id)
     chosen = None
 
-    # ১. ম্যানুয়াল বা অটো-জেনারেটেড পছন্দের ভাষা খোঁজা
     for finder in (
         transcript_list.find_manually_created_transcript,
         transcript_list.find_generated_transcript,
@@ -69,7 +99,6 @@ def _fetch_via_transcript_api(video_id: str) -> dict:
         except Exception:
             continue
 
-    # ২. পছন্দের তালিকায় না থাকলে প্রথম উপলব্ধ ট্রান্সক্রিপ্ট নেওয়া
     if chosen is None:
         available = list(transcript_list)
         if not available:
@@ -103,12 +132,10 @@ def _clean_vtt(vtt_content: str) -> str:
         if "-->" in line or re.fullmatch(r"\d+", line):
             continue
 
-        # ইনলাইন টাইমস্ট্যাম্প ও HTML ট্যাগ রিমুভ
         line = re.sub(r"<[^>]+>", "", line).strip()
         if not line:
             continue
 
-        # YouTube VTT-তে একই লাইন রোলিং হয়ে বারবার আসে — তা বাদ দেওয়া
         if lines_out and line == lines_out[-1]:
             continue
         if line in seen_recent:
@@ -125,6 +152,8 @@ def _clean_vtt(vtt_content: str) -> str:
 def _fetch_via_yt_dlp(video_url: str, video_id: str) -> dict:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
+        # কুকিজ থাকলে web,mweb,android ব্যবহার করতে হয় (android,ios কুকিজ সাপোর্ট করে না)
+        clients = "web,mweb,android" if YOUTUBE_COOKIES else "android,ios,web"
         cmd = [
             "yt-dlp",
             "--no-warnings",
@@ -136,10 +165,13 @@ def _fetch_via_yt_dlp(video_url: str, video_id: str) -> dict:
             "--sub-format",
             "vtt",
             "--extractor-args",
-            "youtube:player_client=android,ios,web",
+            f"youtube:player_client={clients}",
             "-o",
             str(tmp_path / "%(id)s.%(ext)s"),
         ]
+
+        if shutil.which("node"):
+            cmd.extend(["--js-runtimes", "node"])
 
         if PROXY_URL:
             cmd.extend(["--proxy", PROXY_URL])
@@ -158,7 +190,6 @@ def _fetch_via_yt_dlp(video_url: str, video_id: str) -> dict:
                 f"yt-dlp সাবটাইটেল আনতে পারেনি (code={proc.returncode}): {proc.stderr.strip()}"
             )
 
-        # হিন্দি ফাইলকে অগ্রাধিকার দেওয়া
         vtt_files.sort(
             key=lambda p: (0 if ".hi" in p.name else (1 if ".en" in p.name else 2), p.name)
         )
@@ -182,6 +213,15 @@ def get_transcript(video_url: str) -> dict:
     video_id = extract_video_id(video_url)
     print(f"[Transcript] ভিডিও আইডি: {video_id} থেকে ট্রান্সক্রিপ্ট সংগ্রহ শুরু...")
 
+    supadata_keys = load_supadata_keys()
+    if supadata_keys:
+        try:
+            data = _fetch_via_supadata(video_url, video_id, supadata_keys)
+            print(f"[Transcript] সফল ({data['source']}, ভাষা: {data['language']}, অক্ষর: {len(data['text'])})")
+            return data
+        except Exception as supa_err:
+            print(f"[Transcript] Supadata ব্যর্থ হয়েছে: {supa_err}")
+
     try:
         data = _fetch_via_transcript_api(video_id)
         print(f"[Transcript] সফল ({data['source']}, ভাষা: {data['language']}, অক্ষর: {len(data['text'])})")
@@ -196,7 +236,7 @@ def get_transcript(video_url: str) -> dict:
         return data
     except Exception as ytdlp_err:
         raise RuntimeError(
-            "ট্রান্সক্রিপ্ট বের করা যায়নি! যদি GitHub Actions আইপি ইউটিউব ব্লক করে থাকে, "
-            "তাহলে PROXY_URL অথবা YOUTUBE_COOKIES সিক্রেট যোগ করুন।\n"
+            "ট্রান্সক্রিপ্ট বের করা যায়নি! GitHub Actions ক্লাউড IP ইউটিউব ব্লক করেছে। "
+            "সমাধানের জন্য SUPADATA_API_KEYS (সবচেয়ে সহজ, মাসে ১০০টি ফ্রি), PROXY_URL অথবা YOUTUBE_COOKIES সিক্রেট যোগ করুন।\n"
             f"বিস্তারিত: {ytdlp_err}"
         ) from ytdlp_err
