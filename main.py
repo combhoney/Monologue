@@ -14,7 +14,7 @@ from src.gdrive_uploader import (
     permanently_delete_bg_video,
     upload_to_gdrive,
 )
-from src.thumbnail_maker import create_gold_thumbnail
+from src.thumbnail_maker import create_modern_thumbnail
 from src.transcript import get_transcript
 from src.tts_engine import synthesize_speech
 from src.video_maker import create_gameplay_video
@@ -61,29 +61,33 @@ def main() -> int:
     transcript_data = get_transcript(target_url)
     video_id = transcript_data["video_id"]
 
-    # ২. ইংলিশ মনোলোগ স্ক্রিপ্ট + SEO Title/Description/Tags + Thumbnail Badge & Slogan
+    # ২. ইংলিশ মনোলোগ স্ক্রিপ্ট + SEO Title/Description/Tags + Thumbnail Slogan
     content = generate_monologue_script(transcript_data["text"], video_id)
     print(f"[Main] SEO টাইটেল: {content['title']}", flush=True)
-    print(f"[Main] থাম্বনেইল ব্যাজ: {content['thumbnail_badge']} | স্লোগান: {content['thumbnail_slogan']}", flush=True)
+    print(f"[Main] থাম্বনেইল স্লোগান: {content['thumbnail_slogan']}", flush=True)
     print(f"[Main] স্ক্রিপ্ট শব্দ সংখ্যা: {len(content['script'].split())}", flush=True)
 
     # ৩. ভয়েসওভার অডিও জেনারেট (Kaggle Dual-GPU Qwen3-TTS / ফলব্যাক)
     audio_path = OUTPUT_DIR / f"{video_id}.wav"
     synthesize_speech(content["script"], audio_path)
 
-    # ৪. অডিও স্পিড ও স্টুডিও মাস্টারিং + গেমপ্লে মিউট/ট্রিম করে ভিডিও তৈরি
+    # ৪. অডিও মাস্টারিং + শব্দের সাথে সিঙ্কড পপ-আপ সাবটাইটেল + গেমপ্লে ভিডিও তৈরি
     video_path = OUTPUT_DIR / f"{video_id}.mp4"
     bg_tmp_dir = OUTPUT_DIR / f"bg_{video_id}"
-    bg_plan = create_gameplay_video(audio_path, video_path, bg_tmp_dir)
+    bg_plan = create_gameplay_video(
+        audio_wav=audio_path,
+        output_mp4=video_path,
+        bg_tmp_dir=bg_tmp_dir,
+        script_text=content["script"],
+    )
 
-    # ৫. হাই-CTR 3D গোল্ডেন থাম্বনেইল তৈরি
+    # ৫. ৮০% ব্লার ডার্ক ব্যাকগ্রাউন্ড + রেনডম এক-কালার মডার্ন লাইট টেক্সট থাম্বনেইল তৈরি
     thumb_path = OUTPUT_DIR / f"{video_id}_thumb.jpg"
-    create_gold_thumbnail(
+    create_modern_thumbnail(
         video_path=bg_plan["thumb_source_video"],
         slogan=content["thumbnail_slogan"],
         output_jpg=thumb_path,
         seek_sec=bg_plan["thumb_seek_sec"],
-        badge=content.get("thumbnail_badge", "THE HARD TRUTH"),
     )
 
     if SKIP_UPLOAD:
