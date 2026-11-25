@@ -7,7 +7,7 @@ from src.config import load_openrouter_keys, load_openrouter_models
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-SYSTEM_PROMPT = """You are an elite International English YouTube Monologue Scriptwriter and YouTube Viral Growth Strategist.
+SYSTEM_PROMPT = """You are an elite International English YouTube Monologue Scriptwriter and YouTube SEO Growth Strategist.
 You will receive a raw Hindi (or Hinglish) transcript from a YouTube video.
 Your goal is to attract a global, international English-speaking audience (USA, UK, Canada, Australia, Worldwide).
 
@@ -21,10 +21,9 @@ TASK 1 - TRANSCREATION (NOT LITERAL TRANSLATION):
    - STRICTLY NO markdown (`**`, `*`, `#`), NO stage directions (`[pause]`, `(music)`, `Narrator:`), NO bullet lists, and NO emojis inside `script` — ONLY pure spoken words.
    - Target ~700 to 1,600 words depending on source richness.
 
-TASK 2 - HIGH-CTR YOUTUBE SEO & CLICKY THUMBNAIL COPY:
+TASK 2 - INTERNATIONAL YOUTUBE SEO & THUMBNAIL SLOGAN:
 - `title`: High-CTR, curiosity-driven, SEO-optimized English YouTube title for a global audience (max 85 characters, compelling & honest).
-- `thumbnail_badge`: Ultra-short 2 to 3 word eyebrow hook in ALL CAPS (e.g., "BRUTAL REALITY", "DARK PSYCHOLOGY", "WAKE UP CALL", "HARD TRUTH", "STOP THIS").
-- `thumbnail_slogan`: Ultra-punchy 3 to 4 word slogan in ALL CAPS where the LAST 1-2 words deliver the emotional punch (e.g., "STOP CHASING THEM", "SILENCE IS POWER", "NEVER BEG AGAIN", "OUTGROW YOUR PAST"). Must create curiosity without repeating the title word-for-word.
+- `thumbnail_slogan`: Ultra-punchy 2 to 4 word slogan in ALL CAPS that triggers immediate curiosity and complements the title without repeating it word-for-word (e.g., "SILENCE IS POWER", "STOP CHASING THEM", "THE QUIET TRUTH", "NEVER BEG AGAIN"). Max 4 words!
 - `description`: SEO-rich 3-paragraph English YouTube description with high-intent search keywords woven naturally into the first two sentences, followed by 4-6 relevant hashtags at the bottom.
 - `tags`: List of 12 to 15 high-volume English YouTube search tags.
 
@@ -32,7 +31,6 @@ OUTPUT FORMAT:
 Return ONLY valid JSON with these exact keys:
 {
   "title": "...",
-  "thumbnail_badge": "...",
   "thumbnail_slogan": "...",
   "description": "...",
   "tags": ["tag1", "tag2", "..."],
@@ -67,12 +65,12 @@ def _sanitize_tts_script(script: str) -> str:
     return script.strip()
 
 
-def _sanitize_short_caps(text: str, default: str, max_words: int = 4) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9'\-\s]", "", text).strip().upper()
+def _sanitize_slogan(slogan: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9'\-\s]", "", slogan).strip().upper()
     words = [w for w in cleaned.split() if w]
     if not words:
-        return default
-    return " ".join(words[:max_words])
+        return "THE QUIET TRUTH"
+    return " ".join(words[:5])
 
 
 class OpenRouterRotator:
@@ -196,8 +194,8 @@ def generate_monologue_script(hindi_transcript: str, video_id: str) -> dict:
         f"Source Hindi Video ID: {video_id}\n\n"
         f"Hindi Transcript:\n\"\"\"\n{hindi_transcript}\n\"\"\"\n\n"
         "Transcreate this directly into a captivating international English monologue script "
-        "with high-CTR YouTube SEO title, description, tags, a 2-3 word thumbnail_badge, "
-        "and a punchy 3-4 word thumbnail_slogan. Return ONLY valid JSON."
+        "with high-CTR YouTube SEO title, description, tags, and a punchy 2-4 word thumbnail_slogan. "
+        "Return ONLY valid JSON."
     )
 
     messages = [
@@ -211,12 +209,7 @@ def generate_monologue_script(hindi_transcript: str, video_id: str) -> dict:
         try:
             parsed = _extract_json_object(raw)
             title = str(parsed.get("title", "")).strip()
-            thumbnail_badge = _sanitize_short_caps(
-                str(parsed.get("thumbnail_badge", "")), default="THE HARD TRUTH", max_words=3
-            )
-            thumbnail_slogan = _sanitize_short_caps(
-                str(parsed.get("thumbnail_slogan", "")), default="SILENCE IS POWER", max_words=5
-            )
+            thumbnail_slogan = _sanitize_slogan(str(parsed.get("thumbnail_slogan", "")))
             description = str(parsed.get("description", "")).strip()
             tags = parsed.get("tags") or []
             if isinstance(tags, str):
@@ -236,7 +229,6 @@ def generate_monologue_script(hindi_transcript: str, video_id: str) -> dict:
 
             return {
                 "title": title[:95],
-                "thumbnail_badge": thumbnail_badge,
                 "thumbnail_slogan": thumbnail_slogan,
                 "description": description[:4900],
                 "tags": tags,
