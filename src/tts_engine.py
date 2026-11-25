@@ -327,6 +327,17 @@ def split_chunks(text: str, max_chars: int = 700) -> list[str]:
     return out
 
 
+def trim_edge_silence(arr, sr: int, thresh: float = 0.008, pad_sec: float = 0.04):
+    import numpy as np
+    idx = np.where(np.abs(arr) > thresh)[0]
+    if idx.size == 0:
+        return arr
+    pad = int(sr * pad_sec)
+    s0 = max(0, int(idx[0]) - pad)
+    e0 = min(len(arr), int(idx[-1]) + pad)
+    return arr[s0:e0]
+
+
 def gpu_worker(gpu_id: int, tasks: list[tuple[int, str]], model_src: str, is_offline: bool, out_dir: str, err_q):
     try:
         os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -386,7 +397,7 @@ def gpu_worker(gpu_id: int, tasks: list[tuple[int, str]], model_src: str, is_off
                     instruct=instruct,
                     **gen_kwargs,
                 )
-            arr = np.asarray(wavs[0], dtype=np.float32)
+            arr = trim_edge_silence(np.asarray(wavs[0], dtype=np.float32), int(sr))
             np.save(Path(out_dir) / f"chunk_{{chunk_idx:04d}}.npy", arr)
             with open(Path(out_dir) / f"sr_{{chunk_idx:04d}}.txt", "w") as f:
                 f.write(str(int(sr)))
@@ -447,7 +458,8 @@ def main():
                 sample_rate = int(sr_file.read_text().strip())
             arr = np.load(Path(tmpdir) / f"chunk_{{i:04d}}.npy")
             audio_parts.append(arr)
-            audio_parts.append(np.zeros(int(sample_rate * 0.28), dtype=np.float32))
+            # বিরতি কমিয়ে ০.১২ সেকেন্ড করা হয়েছে যাতে ডেলিভারি দ্রুত ও ন্যাচারাল থাকে
+            audio_parts.append(np.zeros(int(sample_rate * 0.12), dtype=np.float32))
 
         final_audio = np.concatenate(audio_parts) if audio_parts else np.zeros(sample_rate, dtype=np.float32)
         peak = float(np.max(np.abs(final_audio))) if final_audio.size else 1.0
@@ -596,7 +608,7 @@ def _synthesize_kokoro_tts(script: str, output_wav: Path) -> None:
 
     all_samples: list[np.ndarray] = []
     sample_rate = 24000
-    pause_samples = np.zeros(int(sample_rate * 0.28), dtype=np.float32)
+    pause_samples = np.zeros(int(sample_rate * 0.14), dtype=np.float32)
 
     for chunk in chunks:
         samples, sr = kokoro.create(chunk, voice=KOKORO_VOICE, speed=KOKORO_SPEED, lang="en-us")
