@@ -23,7 +23,7 @@ from src.youtube_uploader import upload_to_youtube
 
 def read_next_link() -> tuple[list[str], int, str] | tuple[list[str], None, None]:
     if not LINK_FILE.exists():
-        print(f"[Main] '{LINK_FILE.name}' ফাইলটি পাওয়া যায়নি।")
+        print(f"[Main] '{LINK_FILE.name}' ফাইলটি পাওয়া যায়নি।", flush=True)
         return [], None, None
 
     lines = LINK_FILE.read_text(encoding="utf-8").splitlines()
@@ -38,7 +38,7 @@ def remove_processed_link(lines: list[str], processed_idx: int) -> None:
     remaining = [line for i, line in enumerate(lines) if i != processed_idx]
     content = "\n".join(remaining).strip()
     LINK_FILE.write_text((content + "\n") if content else "", encoding="utf-8")
-    print(f"[Cleanup] ব্যবহৃত লিংকটি '{LINK_FILE.name}' থেকে ডিলিট করা হয়েছে।")
+    print(f"[Cleanup] ব্যবহৃত লিংকটি '{LINK_FILE.name}' থেকে ডিলিট করা হয়েছে।", flush=True)
 
 
 def main() -> int:
@@ -46,47 +46,48 @@ def main() -> int:
 
     lines, target_idx, target_url = read_next_link()
     if target_url is None or target_idx is None:
-        print("[Main] Link.txt-এ কোনো প্রসেস করার মতো লিংক নেই। কাজ শেষ।")
+        print("[Main] Link.txt-এ কোনো প্রসেস করার মতো লিংক নেই। কাজ শেষ।", flush=True)
         return 0
 
     bg_videos = list_bg_videos()
     if not bg_videos:
-        print("[Main] Google Drive-এর গেমপ্লে ফোল্ডারে কোনো ভিডিও নেই। কাজ শেষ।")
+        print("[Main] Google Drive-এর গেমপ্লে ফোল্ডারে কোনো ভিডিও নেই। কাজ শেষ।", flush=True)
         return 0
 
-    print(f"[Main] প্রসেস করা হচ্ছে: {target_url}")
-    print(f"[Main] আপলোড মোড: {'YouTube (Live)' if UPLOAD_TO_YOUTUBE else 'Google Drive (Testing / Review)'}")
+    print(f"[Main] প্রসেস করা হচ্ছে: {target_url}", flush=True)
+    print(f"[Main] আপলোড মোড: {'YouTube (Live)' if UPLOAD_TO_YOUTUBE else 'Google Drive (Testing / Review)'}", flush=True)
 
     # ১. হিন্দি ট্রান্সক্রিপ্ট সংগ্রহ
     transcript_data = get_transcript(target_url)
     video_id = transcript_data["video_id"]
 
-    # ২. ইংলিশ মনোলোগ স্ক্রিপ্ট + SEO Title/Description/Tags + Thumbnail Slogan
+    # ২. ইংলিশ মনোলোগ স্ক্রিপ্ট + SEO Title/Description/Tags + Thumbnail Badge & Slogan
     content = generate_monologue_script(transcript_data["text"], video_id)
-    print(f"[Main] SEO টাইটেল: {content['title']}")
-    print(f"[Main] থাম্বনেইল স্লোগান: {content['thumbnail_slogan']}")
-    print(f"[Main] স্ক্রিপ্ট শব্দ সংখ্যা: {len(content['script'].split())}")
+    print(f"[Main] SEO টাইটেল: {content['title']}", flush=True)
+    print(f"[Main] থাম্বনেইল ব্যাজ: {content['thumbnail_badge']} | স্লোগান: {content['thumbnail_slogan']}", flush=True)
+    print(f"[Main] স্ক্রিপ্ট শব্দ সংখ্যা: {len(content['script'].split())}", flush=True)
 
     # ৩. ভয়েসওভার অডিও জেনারেট (Kaggle Dual-GPU Qwen3-TTS / ফলব্যাক)
     audio_path = OUTPUT_DIR / f"{video_id}.wav"
     synthesize_speech(content["script"], audio_path)
 
-    # ৪. Google Drive থেকে রেনডম গেমপ্লে ভিডিও নিয়ে মিউট, ট্রিম ও অডিও যুক্ত করে ভিডিও তৈরি
+    # ৪. অডিও স্পিড ও স্টুডিও মাস্টারিং + গেমপ্লে মিউট/ট্রিম করে ভিডিও তৈরি
     video_path = OUTPUT_DIR / f"{video_id}.mp4"
     bg_tmp_dir = OUTPUT_DIR / f"bg_{video_id}"
     bg_plan = create_gameplay_video(audio_path, video_path, bg_tmp_dir)
 
-    # ৫. গেমপ্লে ভিডিওর ফ্রেমের উপর মেটালিক গোল্ড ফন্টের স্লোগান দিয়ে থাম্বনেইল তৈরি
+    # ৫. হাই-CTR 3D গোল্ডেন থাম্বনেইল তৈরি
     thumb_path = OUTPUT_DIR / f"{video_id}_thumb.jpg"
     create_gold_thumbnail(
         video_path=bg_plan["thumb_source_video"],
         slogan=content["thumbnail_slogan"],
         output_jpg=thumb_path,
         seek_sec=bg_plan["thumb_seek_sec"],
+        badge=content.get("thumbnail_badge", "THE HARD TRUTH"),
     )
 
     if SKIP_UPLOAD:
-        print("[Main] SKIP_UPLOAD=true থাকায় আপলোড ও কোনো ফাইল ডিলিট করা হলো না।")
+        print("[Main] SKIP_UPLOAD=true থাকায় আপলোড ও কোনো ফাইল ডিলিট করা হলো না।", flush=True)
         return 0
 
     # ৬. UPLOAD_TO_YOUTUBE=true হলে YouTube-এ, নইলে Google Drive-এ আপলোড
@@ -100,7 +101,7 @@ def main() -> int:
             thumbnail_path=thumb_path,
         )
         should_cleanup = True
-        print(f"[Main] YouTube-এ আপলোড সফল! নতুন ভিডিও ID: {uploaded_id}")
+        print(f"[Main] YouTube-এ আপলোড সফল! নতুন ভিডিও ID: {uploaded_id}", flush=True)
     else:
         drive_folder = upload_to_gdrive(
             video_path=video_path,
@@ -114,7 +115,7 @@ def main() -> int:
             script=content["script"],
         )
         should_cleanup = CLEANUP_AFTER_GDRIVE
-        print(f"[Main] Google Drive-এ আপলোড সফল! ফোল্ডার: {drive_folder}")
+        print(f"[Main] Google Drive-এ আপলোড সফল! ফোল্ডার: {drive_folder}", flush=True)
 
     # ৭. শুধু YouTube আপলোডের পর (অথবা CLEANUP_AFTER_GDRIVE=true হলে) ডিলিট
     if should_cleanup:
@@ -123,13 +124,13 @@ def main() -> int:
         for kept in bg_plan["to_keep"]:
             print(
                 f"[Cleanup-GDrive] অক্ষত রাখা হলো (<= 60s ব্যবহৃত): {kept['remote_name']} "
-                f"({kept['used_sec']:.1f}s / {kept['full_sec']:.1f}s)"
+                f"({kept['used_sec']:.1f}s / {kept['full_sec']:.1f}s)",
+                flush=True,
             )
         remove_processed_link(lines, target_idx)
     else:
-        print("[Cleanup] Google Drive টেস্ট মোড (UPLOAD_TO_YOUTUBE=false): Link.txt ও গেমপ্লে ভিডিও অক্ষত রাখা হলো।")
+        print("[Cleanup] Google Drive টেস্ট মোড (UPLOAD_TO_YOUTUBE=false): Link.txt ও গেমপ্লে ভিডিও অক্ষত রাখা হলো।", flush=True)
 
-    # টেম্প লোকাল ফাইল পরিষ্কার
     for tmp in (audio_path, video_path, thumb_path):
         if tmp.exists():
             tmp.unlink()
@@ -143,5 +144,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:
-        print(f"[ERROR] অটোমেশন ব্যর্থ হয়েছে (কোনো লিংক বা Google Drive ভিডিও ডিলিট করা হয়নি): {exc}")
+        print(f"[ERROR] অটোমেশন ব্যর্থ হয়েছে (কোনো লিংক বা Google Drive ভিডিও ডিলিট করা হয়নি): {exc}", flush=True)
         sys.exit(1)
