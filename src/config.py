@@ -134,7 +134,7 @@ SKIP_UPLOAD = env_bool("SKIP_UPLOAD", False)
 
 # --- Upload Mode Switch & Google Drive (rclone) Config ---
 UPLOAD_TO_YOUTUBE = env_bool("UPLOAD_TO_YOUTUBE", False)
-CLEANUP_AFTER_GDRIVE = env_bool("CLEANUP_AFTER_GDRIVE", True)
+CLEANUP_AFTER_GDRIVE = env_bool("CLEANUP_AFTER_GDRIVE", False)
 RCLONE_CONFIG = os.getenv("RCLONE_CONFIG", "").strip()
 RCLONE_REMOTE_NAME = env_str("RCLONE_REMOTE_NAME", "")
 GDRIVE_FOLDER_ID = env_str("GDRIVE_FOLDER_ID", "")
