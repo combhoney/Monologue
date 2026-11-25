@@ -7,31 +7,32 @@ from src.config import load_openrouter_keys, load_openrouter_models
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-
-SYSTEM_PROMPT = """You are an elite International English YouTube Monologue Scriptwriter and YouTube SEO Growth Strategist.
+SYSTEM_PROMPT = """You are an elite International English YouTube Monologue Scriptwriter and YouTube Viral Growth Strategist.
 You will receive a raw Hindi (or Hinglish) transcript from a YouTube video.
 Your goal is to attract a global, international English-speaking audience (USA, UK, Canada, Australia, Worldwide).
 
 TASK 1 - TRANSCREATION (NOT LITERAL TRANSLATION):
 1. Understand the complete meaning, emotional arc, life philosophy, stories, metaphors, and psychological insights in the Hindi transcript (intelligently fixing Hindi ASR phonetic errors or Devanagari-transcribed English words from context).
-2. Write a completely original, deeply resonant ENGLISH monologue script crafted specifically for spoken audio narration.
+2. Write a completely original, deeply resonant ENGLISH monologue script crafted specifically for engaging spoken audio narration.
 3. Script rules:
    - Start immediately with a gripping 2-3 sentence cold-open hook (NEVER say "Hey guys", "Welcome back", or "In this video").
    - Write in vivid, emotionally compelling spoken English with varied sentence rhythm, rhetorical questions, and smooth transitions.
-   - Use clean punctuation (periods, commas, ellipses `...`, paragraph breaks) for natural voiceover pauses.
+   - Use clean punctuation (periods, commas, paragraph breaks) for natural narration flow without excessive ellipses.
    - STRICTLY NO markdown (`**`, `*`, `#`), NO stage directions (`[pause]`, `(music)`, `Narrator:`), NO bullet lists, and NO emojis inside `script` — ONLY pure spoken words.
    - Target ~700 to 1,600 words depending on source richness.
 
-TASK 2 - INTERNATIONAL YOUTUBE SEO & THUMBNAIL SLOGAN:
+TASK 2 - HIGH-CTR YOUTUBE SEO & CLICKY THUMBNAIL COPY:
 - `title`: High-CTR, curiosity-driven, SEO-optimized English YouTube title for a global audience (max 85 characters, compelling & honest).
-- `thumbnail_slogan`: Ultra-punchy 2 to 4 word slogan in ALL CAPS that triggers immediate curiosity and complements the title without repeating it word-for-word (e.g., "SILENCE IS POWER", "STOP CHASING THEM", "THE QUIET TRUTH", "NEVER BEG AGAIN"). Max 4 words!
+- `thumbnail_badge`: Ultra-short 2 to 3 word eyebrow hook in ALL CAPS (e.g., "BRUTAL REALITY", "DARK PSYCHOLOGY", "WAKE UP CALL", "HARD TRUTH", "STOP THIS").
+- `thumbnail_slogan`: Ultra-punchy 3 to 4 word slogan in ALL CAPS where the LAST 1-2 words deliver the emotional punch (e.g., "STOP CHASING THEM", "SILENCE IS POWER", "NEVER BEG AGAIN", "OUTGROW YOUR PAST"). Must create curiosity without repeating the title word-for-word.
 - `description`: SEO-rich 3-paragraph English YouTube description with high-intent search keywords woven naturally into the first two sentences, followed by 4-6 relevant hashtags at the bottom.
-- `tags`: List of 12 to 15 high-volume English YouTube search tags (lowercase/title-case keywords targeting mindset, philosophy, self-improvement, stoicism, life advice, monologue, etc.).
+- `tags`: List of 12 to 15 high-volume English YouTube search tags.
 
 OUTPUT FORMAT:
 Return ONLY valid JSON with these exact keys:
 {
   "title": "...",
+  "thumbnail_badge": "...",
   "thumbnail_slogan": "...",
   "description": "...",
   "tags": ["tag1", "tag2", "..."],
@@ -66,12 +67,12 @@ def _sanitize_tts_script(script: str) -> str:
     return script.strip()
 
 
-def _sanitize_slogan(slogan: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9'\-\s]", "", slogan).strip().upper()
+def _sanitize_short_caps(text: str, default: str, max_words: int = 4) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9'\-\s]", "", text).strip().upper()
     words = [w for w in cleaned.split() if w]
     if not words:
-        return "THE QUIET TRUTH"
-    return " ".join(words[:5])
+        return default
+    return " ".join(words[:max_words])
 
 
 class OpenRouterRotator:
@@ -105,7 +106,7 @@ class OpenRouterRotator:
 
                 tried_any_key = True
                 key_label = f"Key#{key_idx + 1}"
-                print(f"[AI] চেষ্টা চলছে -> Model [{model_idx}/{len(self.models)}]: {model} | {key_label}")
+                print(f"[AI] চেষ্টা চলছে -> Model [{model_idx}/{len(self.models)}]: {model} | {key_label}", flush=True)
 
                 try:
                     resp = requests.post(
@@ -126,7 +127,7 @@ class OpenRouterRotator:
                     )
                 except requests.RequestException as req_err:
                     msg = f"{model} ({key_label}) নেটওয়ার্ক এরর: {req_err}"
-                    print(f"[AI] {msg}")
+                    print(f"[AI] {msg}", flush=True)
                     errors.append(msg)
                     time.sleep(1.5)
                     continue
@@ -150,25 +151,25 @@ class OpenRouterRotator:
                         continue
 
                     self.key_cursor = (key_idx + 1) % n_keys
-                    print(f"[AI] সফল হয়েছে -> {model} ({key_label})")
+                    print(f"[AI] সফল হয়েছে -> {model} ({key_label})", flush=True)
                     return content
 
                 err_snippet = resp.text[:250].replace("\n", " ")
                 if status in (401, 403):
-                    print(f"[AI] {key_label} বাতিল/ভুল ({status})। বাদ দেওয়া হলো।")
+                    print(f"[AI] {key_label} বাতিল/ভুল ({status})। বাদ দেওয়া হলো।", flush=True)
                     self.dead_keys.add(api_key)
                 elif status == 402:
-                    print(f"[AI] {key_label}-এ পেইড ক্রেডিট নেই (402)। ফ্রি মডেলের জন্য রাখা হলো।")
+                    print(f"[AI] {key_label}-এ পেইড ক্রেডিট নেই (402)। ফ্রি মডেলের জন্য রাখা হলো।", flush=True)
                     self.free_only_keys.add(api_key)
                 elif status == 429:
-                    print(f"[AI] {key_label} রেট-লিমিট (429)। পরের Key চেষ্টা হচ্ছে...")
+                    print(f"[AI] {key_label} রেট-লিমিট (429)। পরের Key চেষ্টা হচ্ছে...", flush=True)
                     time.sleep(1.0)
                 elif status == 404:
-                    print(f"[AI] মডেল {model} পাওয়া যায়নি (404)। পরের মডেলে যাওয়া হচ্ছে...")
+                    print(f"[AI] মডেল {model} পাওয়া যায়নি (404)। পরের মডেলে যাওয়া হচ্ছে...", flush=True)
                     errors.append(f"{model}: 404 Not Found")
                     break
                 else:
-                    print(f"[AI] HTTP {status} ({model} | {key_label}): {err_snippet}")
+                    print(f"[AI] HTTP {status} ({model} | {key_label}): {err_snippet}", flush=True)
                     time.sleep(1.0)
 
                 errors.append(f"{model} ({key_label}) -> HTTP {status}: {err_snippet}")
@@ -195,8 +196,8 @@ def generate_monologue_script(hindi_transcript: str, video_id: str) -> dict:
         f"Source Hindi Video ID: {video_id}\n\n"
         f"Hindi Transcript:\n\"\"\"\n{hindi_transcript}\n\"\"\"\n\n"
         "Transcreate this directly into a captivating international English monologue script "
-        "with high-CTR YouTube SEO title, description, tags, and a punchy 2-4 word thumbnail_slogan. "
-        "Return ONLY valid JSON."
+        "with high-CTR YouTube SEO title, description, tags, a 2-3 word thumbnail_badge, "
+        "and a punchy 3-4 word thumbnail_slogan. Return ONLY valid JSON."
     )
 
     messages = [
@@ -210,7 +211,12 @@ def generate_monologue_script(hindi_transcript: str, video_id: str) -> dict:
         try:
             parsed = _extract_json_object(raw)
             title = str(parsed.get("title", "")).strip()
-            thumbnail_slogan = _sanitize_slogan(str(parsed.get("thumbnail_slogan", "")))
+            thumbnail_badge = _sanitize_short_caps(
+                str(parsed.get("thumbnail_badge", "")), default="THE HARD TRUTH", max_words=3
+            )
+            thumbnail_slogan = _sanitize_short_caps(
+                str(parsed.get("thumbnail_slogan", "")), default="SILENCE IS POWER", max_words=5
+            )
             description = str(parsed.get("description", "")).strip()
             tags = parsed.get("tags") or []
             if isinstance(tags, str):
@@ -230,6 +236,7 @@ def generate_monologue_script(hindi_transcript: str, video_id: str) -> dict:
 
             return {
                 "title": title[:95],
+                "thumbnail_badge": thumbnail_badge,
                 "thumbnail_slogan": thumbnail_slogan,
                 "description": description[:4900],
                 "tags": tags,
@@ -237,6 +244,6 @@ def generate_monologue_script(hindi_transcript: str, video_id: str) -> dict:
             }
         except Exception as parse_err:
             last_err = parse_err
-            print(f"[AI] JSON পার্স করতে সমস্যা (চেষ্টা {attempt}/2): {parse_err}")
+            print(f"[AI] JSON পার্স করতে সমস্যা (চেষ্টা {attempt}/2): {parse_err}", flush=True)
 
     raise RuntimeError(f"AI আউটপুট পার্স করা যায়নি: {last_err}")
