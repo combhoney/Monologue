@@ -11,11 +11,13 @@ from src.config import (
     BG_DELETE_THRESHOLD_SEC,
     FFMPEG_CRF,
     FFMPEG_PRESET,
+    SUBTITLE_ENABLED,
     VIDEO_FPS,
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
 from src.gdrive_uploader import download_bg_video, list_bg_videos
+from src.subtitle_maker import generate_animated_ass_subtitles
 
 
 def _get_video_duration(video_path: Path) -> float:
@@ -40,10 +42,6 @@ def _get_video_duration(video_path: Path) -> float:
 
 
 def _prepare_mastered_audio(raw_wav: Path, mastered_wav: Path) -> float:
-    """
-    অডিওর পিচ ঠিক রেখে গতি হালকা ফাস্ট (AUDIO_SPEED) করে এবং
-    YouTube Studio Mastering (EQ + -14 LUFS + 48kHz) প্রয়োগ করে।
-    """
     speed = max(0.5, min(2.0, float(AUDIO_SPEED)))
     filters = []
     if abs(speed - 1.0) > 0.005:
@@ -182,7 +180,16 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
     }
 
 
-def create_gameplay_video(audio_wav: Path, output_mp4: Path, bg_tmp_dir: Path) -> dict:
+def _escape_ffmpeg_path(p: Path) -> str:
+    return p.as_posix().replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
+def create_gameplay_video(
+    audio_wav: Path,
+    output_mp4: Path,
+    bg_tmp_dir: Path,
+    script_text: str = "",
+) -> dict:
     output_mp4.parent.mkdir(parents=True, exist_ok=True)
     bg_tmp_dir.mkdir(parents=True, exist_ok=True)
     w, h, fps = VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS
@@ -190,12 +197,22 @@ def create_gameplay_video(audio_wav: Path, output_mp4: Path, bg_tmp_dir: Path) -
     mastered_wav = bg_tmp_dir / "mastered_voiceover.wav"
     audio_dur = _prepare_mastered_audio(audio_wav, mastered_wav)
 
+    ass_file: Path | None = None
+    sub_fonts_dir = bg_tmp_dir / "sub_fonts"
+    if SUBTITLE_ENABLED and script_text.strip():
+        ass_file = generate_animated_ass_subtitles(
+            audio_wav=mastered_wav,
+            script_text=script_text,
+            out_ass=bg_tmp_dir / "captions.ass",
+            fonts_dir_out=sub_fonts_dir,
+        )
+
     plan = _select_and_download_gameplay_clips(audio_dur, bg_tmp_dir)
     segments = plan["segments"]
 
     print(
         f"[Video] FFmpeg দিয়ে ভিডিও তৈরি হচ্ছে: {w}x{h} @ {fps}fps "
-        f"(preset={FFMPEG_PRESET}, crf={FFMPEG_CRF}) | অডিও দৈর্ঘ্য: {audio_dur:.2f}s | ক্লিপ: {len(segments)}টি",
+        f"(preset={FFMPEG_PRESET}, crf={FFMPEG_CRF}, subtitles={'ON' if ass_file else 'OFF'})",
         flush=True,
     )
 
@@ -217,10 +234,19 @@ def create_gameplay_video(audio_wav: Path, output_mp4: Path, bg_tmp_dir: Path) -
     audio_idx = len(segments)
     cmd.extend(["-i", str(mastered_wav)])
 
-    filter_complex = (
-        ";".join(filter_parts)
-        + f";{''.join(concat_inputs)}concat=n={len(segments)}:v=1:a=0,format=yuv420p[outv]"
-    )
+    if ass_file is not None:
+        esc_ass = _escape_ffmpeg_path(ass_file)
+        esc_fonts = _escape_ffmpeg_path(sub_fonts_dir)
+        filter_complex = (
+            ";".join(filter_parts)
+            + f";{''.join(concat_inputs)}concat=n={len(segments)}:v=1:a=0[vcat];"
+            + f"[vcat]ass=filename='{esc_ass}':fontsdir='{esc_fonts}',format=yuv420p[outv]"
+        )
+    else:
+        filter_complex = (
+            ";".join(filter_parts)
+            + f";{''.join(concat_inputs)}concat=n={len(segments)}:v=1:a=0,format=yuv420p[outv]"
+        )
 
     cmd.extend([
         "-filter_complex",
