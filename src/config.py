@@ -117,7 +117,8 @@ def load_openrouter_models() -> list[str]:
 VIDEO_WIDTH = env_int("VIDEO_WIDTH", 1920)
 VIDEO_HEIGHT = env_int("VIDEO_HEIGHT", 1080)
 VIDEO_FPS = env_int("VIDEO_FPS", 30)
-FFMPEG_PRESET = env_str("FFMPEG_PRESET", "faster")
+FFMPEG_PRESET = env_str("FFMPEG_PRESET", "veryfast")
+FFMPEG_CRF = env_int("FFMPEG_CRF", 22)
 BG_DELETE_THRESHOLD_SEC = env_float("BG_DELETE_THRESHOLD_SEC", 60.0)
 ALLOW_BG_LOOP = env_bool("ALLOW_BG_LOOP", True)
 
@@ -128,7 +129,7 @@ KAGGLE_KEY = env_str("KAGGLE_KEY", "")
 KAGGLE_API_TOKEN = env_str("KAGGLE_API_TOKEN", "")
 KAGGLE_CACHE_KERNEL_SLUG = env_str("KAGGLE_CACHE_KERNEL_SLUG", "qwen3-tts-model-cache")
 KAGGLE_KERNEL_SLUG = env_str("KAGGLE_KERNEL_SLUG", "yt-monologue-qwen3-tts-worker")
-KAGGLE_TIMEOUT_SEC = env_int("KAGGLE_TIMEOUT_SEC", 1500)
+KAGGLE_TIMEOUT_SEC = env_int("KAGGLE_TIMEOUT_SEC", 1800)
 
 QWEN_TTS_MODEL = env_str("QWEN_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
 QWEN_SPEAKER = env_str("QWEN_SPEAKER", "Ryan")
