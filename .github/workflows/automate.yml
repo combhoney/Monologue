@@ -40,9 +40,10 @@ jobs:
           sudo apt-get install -y ffmpeg espeak-ng fonts-montserrat fonts-dejavu-core
           curl -fsSL https://rclone.org/install.sh | sudo bash
 
-      - name: Install Python dependencies
+      - name: Install Python dependencies (CPU PyTorch + TorchAudio for exact subtitle alignment)
         run: |
           python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
           pip install -r requirements.txt
 
       - name: Pre-install Qwen3-TTS into Kaggle Account (One-Time Setup)
@@ -64,6 +65,8 @@ jobs:
           AUDIO_SPEED: ${{ vars.AUDIO_SPEED || '1.12' }}
           SUBTITLE_ENABLED: ${{ vars.SUBTITLE_ENABLED || 'true' }}
           SUBTITLE_MODEL: ${{ vars.SUBTITLE_MODEL || 'base.en' }}
+          SUBTITLE_MAX_WORDS: ${{ vars.SUBTITLE_MAX_WORDS || '1' }}
+          SUBTITLE_FONT_SIZE: ${{ vars.SUBTITLE_FONT_SIZE || '92' }}
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
