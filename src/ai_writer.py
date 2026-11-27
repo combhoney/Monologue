@@ -7,25 +7,26 @@ from src.config import load_openrouter_keys, load_openrouter_models
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-SYSTEM_PROMPT = """You are an elite International English YouTube Monologue Scriptwriter and YouTube SEO Growth Strategist.
+SYSTEM_PROMPT = """You are a skilled International English YouTube Scriptwriter.
 You will receive a raw Hindi (or Hinglish) transcript from a YouTube video.
-Your goal is to attract a global, international English-speaking audience (USA, UK, Canada, Australia, Worldwide).
+Your goal is to turn it into an engaging, natural-sounding English YouTube video script for a global audience.
 
-TASK 1 - TRANSCREATION (NOT LITERAL TRANSLATION):
-1. Understand the complete meaning, emotional arc, life philosophy, stories, metaphors, and psychological insights in the Hindi transcript (intelligently fixing Hindi ASR phonetic errors or Devanagari-transcribed English words from context).
-2. Write a completely original, deeply resonant ENGLISH monologue script crafted specifically for engaging spoken audio narration.
+TASK 1 - NATURAL ADAPTATION (NOT LITERAL TRANSLATION, NOT DRAMATIC MONOLOGUE):
+1. Read and understand the full message, ideas, stories, examples, and context of the Hindi transcript (fixing any Hindi ASR phonetic errors or Devanagari-transcribed English words naturally).
+2. Rewrite it into a completely original ENGLISH script that sounds like a real, relatable human talking naturally to their viewers on YouTube.
 3. Script rules:
-   - Start immediately with a gripping 2-3 sentence cold-open hook (NEVER say "Hey guys", "Welcome back", or "In this video").
-   - Write in vivid, emotionally compelling spoken English with varied sentence rhythm, rhetorical questions, and smooth transitions.
-   - Use clean punctuation (periods, commas, paragraph breaks) for natural narration flow without excessive ellipses.
+   - Keep the tone natural, conversational, clear, and authentic—avoid sounding theatrical, overly dramatic, preachy, or like a poetic monologue.
+   - Start with an engaging, natural opening that introduces the topic smoothly (never use clichés like "Hey guys, welcome back to my channel").
+   - Use everyday, easy-to-follow spoken English with natural transitions and smooth sentence flow.
+   - Use normal punctuation (periods, commas, paragraph breaks) so Text-to-Speech sounds completely natural and human.
    - STRICTLY NO markdown (`**`, `*`, `#`), NO stage directions (`[pause]`, `(music)`, `Narrator:`), NO bullet lists, and NO emojis inside `script` — ONLY pure spoken words.
-   - Target ~700 to 1,600 words depending on source richness.
+   - Keep the length proportional to the source content (~700 to 1,600 words depending on depth), without unnecessary fluff.
 
 TASK 2 - INTERNATIONAL YOUTUBE SEO & THUMBNAIL SLOGAN:
 - `title`: High-CTR, curiosity-driven, SEO-optimized English YouTube title for a global audience (max 85 characters, compelling & honest).
-- `thumbnail_slogan`: Ultra-punchy 2 to 4 word slogan in ALL CAPS that triggers immediate curiosity and complements the title without repeating it word-for-word (e.g., "SILENCE IS POWER", "STOP CHASING THEM", "THE QUIET TRUTH", "NEVER BEG AGAIN"). Max 4 words!
-- `description`: SEO-rich 3-paragraph English YouTube description with high-intent search keywords woven naturally into the first two sentences, followed by 4-6 relevant hashtags at the bottom.
-- `tags`: List of 12 to 15 high-volume English YouTube search tags.
+- `thumbnail_slogan`: Ultra-punchy 2 to 4 word slogan in ALL CAPS that triggers curiosity and complements the title without repeating it word-for-word. Max 4 words!
+- `description`: SEO-rich 2-3 paragraph English YouTube description with relevant search keywords woven naturally into the opening lines, followed by 4-6 relevant hashtags at the bottom.
+- `tags`: List of 12 to 15 relevant high-volume English YouTube search tags matching the video's actual topic.
 
 OUTPUT FORMAT:
 Return ONLY valid JSON with these exact keys:
@@ -69,7 +70,7 @@ def _sanitize_slogan(slogan: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9'\-\s]", "", slogan).strip().upper()
     words = [w for w in cleaned.split() if w]
     if not words:
-        return "THE QUIET TRUTH"
+        return "THE REAL TRUTH"
     return " ".join(words[:5])
 
 
@@ -112,8 +113,8 @@ class OpenRouterRotator:
                         headers={
                             "Authorization": f"Bearer {api_key}",
                             "Content-Type": "application/json",
-                            "HTTP-Referer": "https://github.com/youtube-monologue-automation",
-                            "X-Title": "YouTube Monologue Automation",
+                            "HTTP-Referer": "https://github.com/youtube-automation",
+                            "X-Title": "YouTube Content Automation",
                         },
                         json={
                             "model": model,
@@ -193,7 +194,7 @@ def generate_monologue_script(hindi_transcript: str, video_id: str) -> dict:
     user_prompt = (
         f"Source Hindi Video ID: {video_id}\n\n"
         f"Hindi Transcript:\n\"\"\"\n{hindi_transcript}\n\"\"\"\n\n"
-        "Transcreate this directly into a captivating international English monologue script "
+        "Turn this into a natural, conversational English YouTube script "
         "with high-CTR YouTube SEO title, description, tags, and a punchy 2-4 word thumbnail_slogan. "
         "Return ONLY valid JSON."
     )
@@ -221,11 +222,11 @@ def generate_monologue_script(hindi_transcript: str, video_id: str) -> dict:
                 raise ValueError("জেনারেটেড স্ক্রিপ্ট খুব ছোট হয়েছে।")
 
             if not title:
-                title = "The Silent Mindset Shift That Changes Everything"
+                title = "What Nobody Tells You About Moving On"
             if not description:
-                description = f"{title}\n\n#monologue #mindset #philosophy #selfimprovement"
+                description = f"{title}\n\n#selfimprovement #mindset #relationships #advice"
             if not tags:
-                tags = ["mindset", "philosophy", "monologue", "self improvement", "life lessons", "wisdom"]
+                tags = ["self improvement", "mindset", "life advice", "storytelling", "psychology", "wisdom"]
 
             return {
                 "title": title[:95],
