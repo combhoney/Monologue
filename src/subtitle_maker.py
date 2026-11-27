@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+import torch
+import torchaudio
 from faster_whisper import WhisperModel
 from PIL import ImageFont
 
@@ -23,9 +25,6 @@ POPPINS_EXTRABOLD_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Po
 MONTSERRAT_BOLD_URL = "https://github.com/googlefonts/montserrat/raw/master/fonts/ttf/Montserrat-Bold.ttf"
 
 # মডার্ন কালার কম্বিনেশন (ASS BGR ফরম্যাটে: &HAABBGGRR&)
-# - ছোট/কানেক্টর শব্দ: ক্রিস্প স্নো হোয়াইট (#F8FAFC)
-# - মূল পাওয়ার/উচ্চারিত শব্দ: ওয়ার্ম গোল্ড-অ্যাম্বার (#FFD166)
-# - স্ট্রোক / বর্ডার: ডিপ অবসিডিয়ান চারকোল (#0B0F17)
 BASE_COLOR_ASS = "&H00FCFAF8&"
 ACTIVE_COLOR_ASS = "&H0066D1FF&"
 OUTLINE_COLOR_ASS = "&H00170F0B&"
@@ -117,15 +116,32 @@ def _prepare_subtitle_font(fonts_dir_out: Path) -> tuple[str, bool]:
     return family_name, is_bold
 
 
-def _extract_coarse_whisper_anchors(audio_wav: Path, script_tokens: list[str], audio_dur: float) -> list[dict]:
+def _load_mono_16k(audio_wav: Path) -> tuple[torch.Tensor, np.ndarray, float]:
+    raw_wav, orig_sr = sf.read(str(audio_wav), dtype="float32")
+    if raw_wav.ndim > 1:
+        raw_wav = np.mean(raw_wav, axis=1)
+    audio_dur = len(raw_wav) / float(orig_sr)
+
+    wav_tensor = torch.from_numpy(raw_wav).unsqueeze(0)
+    if orig_sr != 16000:
+        wav_tensor = torchaudio.functional.resample(wav_tensor, orig_sr, 16000)
+    mono_16k = wav_tensor.squeeze(0).numpy().astype(np.float32)
+    return wav_tensor, mono_16k, audio_dur
+
+
+def _extract_coarse_whisper_anchors(
+    mono_16k: np.ndarray,
+    script_tokens: list[str],
+    audio_dur: float,
+) -> list[dict]:
     """
-    vad_filter=False রেখে coarse Whisper টাইমস্ট্যাম্প বের করে,
-    যাতে পরের ধাপে MMS_FA ২০-২৫ সেকেন্ডের উইন্ডোতে ±২০ms নিখুঁত অ্যালাইন করতে পারে।
+    সরাসরি 16kHz numpy array পাঠিয়ে PyAV বাইপাস করা হয়েছে,
+    যাতে কোনোভাবেই metadata_errors বাগ না আসে।
     """
     print(f"[Subtitle] Whisper ({SUBTITLE_MODEL}) দিয়ে প্রাথমিক সেগমেন্ট অ্যাংকর তৈরি হচ্ছে...", flush=True)
     model = WhisperModel(SUBTITLE_MODEL, device="cpu", compute_type="int8", cpu_threads=4)
     segments, _ = model.transcribe(
-        str(audio_wav),
+        mono_16k,
         language="en",
         word_timestamps=True,
         vad_filter=False,
@@ -140,6 +156,8 @@ def _extract_coarse_whisper_anchors(audio_wav: Path, script_tokens: list[str], a
             txt = (w.word or "").strip()
             if txt:
                 whisper_words.append({"word": txt, "start": float(w.start), "end": float(w.end)})
+
+    print(f"[Subtitle] Whisper থেকে {len(whisper_words)}টি শব্দের অ্যাংকর পাওয়া গেছে।", flush=True)
 
     if not whisper_words:
         total_chars = sum(max(1, len(t)) for t in script_tokens)
@@ -207,9 +225,6 @@ def _trim_word_silence_edges(
     start_sec: float,
     end_sec: float,
 ) -> tuple[float, float]:
-    """
-    শব্দের ভেতরের শুরু বা শেষের বাড়তি নীরবতা ছেঁটে ঠিক ভয়েস অনসেটে বসাবে।
-    """
     if (end_sec - start_sec) <= 0.14:
         return start_sec, end_sec
     s_idx = max(0, int(start_sec * sr))
@@ -232,28 +247,16 @@ def _trim_word_silence_edges(
 
 
 def _forced_align_with_mms(
-    audio_wav: Path,
+    wav_tensor: torch.Tensor,
+    mono_16k: np.ndarray,
     script_tokens: list[str],
     coarse_words: list[dict],
     audio_dur: float,
 ) -> list[dict]:
-    """
-    Meta torchaudio.pipelines.MMS_FA ব্যবহার করে ±২০ms ফোনেম-লেভেল CTC Forced Alignment।
-    """
-    import torch
-    import torchaudio
     from torchaudio.pipelines import MMS_FA as bundle
 
     print("[Subtitle] Meta MMS_FA দিয়ে ±20ms ফোনেম-লেভেল Forced Alignment চলছে...", flush=True)
-    raw_wav, orig_sr = sf.read(str(audio_wav), dtype="float32")
-    if raw_wav.ndim > 1:
-        raw_wav = np.mean(raw_wav, axis=1)
-
     target_sr = bundle.sample_rate  # 16000
-    wav_tensor = torch.from_numpy(raw_wav).unsqueeze(0)
-    if orig_sr != target_sr:
-        wav_tensor = torchaudio.functional.resample(wav_tensor, orig_sr, target_sr)
-    mono_16k = wav_tensor.squeeze(0).numpy()
 
     model = bundle.get_model().to("cpu")
     model.eval()
@@ -308,7 +311,6 @@ def _forced_align_with_mms(
                         ws, we = _trim_word_silence_edges(mono_16k, target_sr, ws, we)
                         temp_out.append({"word": orig_tok, "start": ws, "end": we})
 
-                # কোনো "*" গ্যাপ থাকলে অনায়াসে ইন্টারপোলেট করা
                 for k in range(len(temp_out)):
                     if temp_out[k] is None:
                         prev_e = temp_out[k - 1]["end"] if k > 0 and temp_out[k - 1] else t_est_start
@@ -404,13 +406,13 @@ def generate_animated_ass_subtitles(
     fonts_dir_out: Path,
 ) -> Path:
     out_ass.parent.mkdir(parents=True, exist_ok=True)
-    audio_dur = float(sf.info(str(audio_wav)).duration)
+    wav_tensor, mono_16k, audio_dur = _load_mono_16k(audio_wav)
     script_tokens = [t for t in re.split(r"\s+", script_text.strip()) if t]
 
     font_family, is_bold = _prepare_subtitle_font(fonts_dir_out)
 
     try:
-        coarse = _extract_coarse_whisper_anchors(audio_wav, script_tokens, audio_dur)
+        coarse = _extract_coarse_whisper_anchors(mono_16k, script_tokens, audio_dur)
     except Exception as err:
         print(f"[Subtitle] Whisper অ্যাংকর ব্যর্থ ({err}), আনুমানিক ব্যাকআপ ব্যবহার হচ্ছে...", flush=True)
         total_chars = sum(max(1, len(t)) for t in script_tokens) or 1
@@ -422,7 +424,7 @@ def generate_animated_ass_subtitles(
             cur += d
 
     try:
-        aligned_words = _forced_align_with_mms(audio_wav, script_tokens, coarse, audio_dur)
+        aligned_words = _forced_align_with_mms(wav_tensor, mono_16k, script_tokens, coarse, audio_dur)
     except Exception as fa_err:
         print(f"[Subtitle] MMS_FA অ্যালাইনমেন্ট চালানো যায়নি ({fa_err}), Whisper অ্যাংকর ব্যবহার হচ্ছে...", flush=True)
         aligned_words = coarse
@@ -453,14 +455,12 @@ def generate_animated_ass_subtitles(
         en = cue[-1]["end"]
         if idx + 1 < len(cues):
             next_st = cues[idx + 1][0]["start"]
-            # পরের শব্দের ঠিক আগে পরিষ্কারভাবে শেষ করা (কখনো ওভারল্যাপ করবে না)
             en = min(en + 0.08, max(st + 0.06, next_st - 0.015))
         else:
             en = min(audio_dur, en + 0.12)
 
         dur_ms = max(70, int(round((en - st) * 1000)))
 
-        # স্মুথ পপ-ইন ও পপ-আউট অ্যানিমেশন
         if dur_ms >= 220:
             in_peak = 65
             in_settle = 135
