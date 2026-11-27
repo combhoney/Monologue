@@ -63,6 +63,7 @@ jobs:
           SUPADATA_API_KEYS: ${{ secrets.SUPADATA_API_KEYS }}
           TTS_ENGINE: ${{ vars.TTS_ENGINE || 'auto' }}
           AUDIO_SPEED: ${{ vars.AUDIO_SPEED || '1.05' }}
+          MIRROR_BG_VIDEO: ${{ vars.MIRROR_BG_VIDEO || 'true' }}
           SUBTITLE_ENABLED: ${{ vars.SUBTITLE_ENABLED || 'true' }}
           SUBTITLE_MODEL: ${{ vars.SUBTITLE_MODEL || 'base.en' }}
           SUBTITLE_MAX_WORDS: ${{ vars.SUBTITLE_MAX_WORDS || '1' }}
