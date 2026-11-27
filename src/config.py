@@ -72,14 +72,15 @@ def load_supadata_keys() -> list[str]:
 
 
 DEFAULT_OPENROUTER_MODELS = [
-    # --- Tier 1: Flagship & Ultra-Affordable Paid Models ---
+    # --- #1 প্রিয় ও হাই-কোয়ালিটি মডেল (সবার আগে চেষ্টা করবে) ---
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    # --- ব্যাকআপ সেরা ফ্ল্যাগশিপ পেইড মডেল ---
     "anthropic/claude-sonnet-4.6",
     "google/gemini-3.1-pro-preview",
     "deepseek/deepseek-v3.2",
     "google/gemini-2.5-pro",
     "openai/gpt-4o-mini",
-    # --- Tier 2: Verified Active Free Models ---
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    # --- ব্যাকআপ অন্যান্য সচল ফ্রি মডেল ---
     "baidu/ernie-5.5-flash-preview:free",
     "nvidia/nemotron-3.5-super-vl:free",
     "google/gemma-4-31b-it:free",
@@ -116,7 +117,7 @@ FFMPEG_CRF = env_int("FFMPEG_CRF", 22)
 BG_DELETE_THRESHOLD_SEC = env_float("BG_DELETE_THRESHOLD_SEC", 60.0)
 BG_LONG_VIDEO_MIN_SEC = env_float("BG_LONG_VIDEO_MIN_SEC", 3600.0)
 ALLOW_BG_LOOP = env_bool("ALLOW_BG_LOOP", True)
-MIRROR_BG_VIDEO = env_bool("MIRROR_BG_VIDEO", False)  # ডিফল্টভাবে বন্ধ থাকবে
+MIRROR_BG_VIDEO = env_bool("MIRROR_BG_VIDEO", False)
 
 # --- Subtitle Config (Exact Forced Alignment Word-by-Word Pop-Up) ---
 SUBTITLE_ENABLED = env_bool("SUBTITLE_ENABLED", True)
