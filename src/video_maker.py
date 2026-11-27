@@ -9,6 +9,7 @@ from src.config import (
     ALLOW_BG_LOOP,
     AUDIO_SPEED,
     BG_DELETE_THRESHOLD_SEC,
+    BG_LONG_VIDEO_MIN_SEC,
     FFMPEG_CRF,
     FFMPEG_PRESET,
     SUBTITLE_ENABLED,
@@ -78,6 +79,19 @@ def _prepare_mastered_audio(raw_wav: Path, mastered_wav: Path) -> float:
     return dur
 
 
+def _choose_random_start_offset(full_dur: float, use_dur: float) -> float:
+    """
+    ১ ঘণ্টা (BG_LONG_VIDEO_MIN_SEC = 3600s) বা তার বেশি সময়ের ভিডিও হলে
+    শুরু থেকে না নিয়ে মাঝের যেকোনো একটি রেনডম সময় থেকে ক্লিপ বেছে নেবে।
+    """
+    if full_dur >= BG_LONG_VIDEO_MIN_SEC and (full_dur - use_dur) > 5.0:
+        slack = full_dur - use_dur
+        min_start = min(60.0, slack * 0.25)
+        max_start = max(min_start, slack - min(10.0, slack * 0.10))
+        return round(random.uniform(min_start, max_start), 2)
+    return 0.0
+
+
 def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path) -> dict:
     remote_videos = list_bg_videos()
     if not remote_videos:
@@ -105,10 +119,13 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
             continue
 
         use_dur = min(full_dur, remaining)
+        start_sec = _choose_random_start_offset(full_dur, use_dur)
+
         segments.append(
             {
                 "remote_name": remote_name,
                 "local_path": local_path,
+                "start_sec": start_sec,
                 "used_duration": use_dur,
                 "full_duration": full_dur,
             }
@@ -117,9 +134,11 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
         usage_totals[remote_name] = usage_totals.get(remote_name, 0.0) + use_dur
         remaining -= use_dur
 
+        end_sec = start_sec + use_dur
         print(
-            f"[Video] ক্লিপ যুক্ত হলো: '{remote_name}' | "
-            f"মূল দৈর্ঘ্য: {full_dur:.1f}s | ব্যবহৃত: {use_dur:.1f}s | বাকি অডিও: {max(0.0, remaining):.1f}s",
+            f"[Video] ক্লিপ যুক্ত হলো: '{remote_name}' | মোট দৈর্ঘ্য: {full_dur/60:.1f}m | "
+            f"নেওয়া হয়েছে: {start_sec/60:.2f}m -> {end_sec/60:.2f}m ({use_dur:.1f}s) | "
+            f"বাকি অডিও: {max(0.0, remaining):.1f}s",
             flush=True,
         )
 
@@ -140,10 +159,12 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
                 if remaining <= 0.05:
                     break
                 use_dur = min(seg["full_duration"], remaining)
+                start_sec = _choose_random_start_offset(seg["full_duration"], use_dur)
                 segments.append(
                     {
                         "remote_name": seg["remote_name"],
                         "local_path": seg["local_path"],
+                        "start_sec": start_sec,
                         "used_duration": use_dur,
                         "full_duration": seg["full_duration"],
                     }
@@ -171,12 +192,13 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
         flush=True,
     )
 
+    first_seg = segments[0]
     return {
         "segments": segments,
         "to_delete": to_delete,
         "to_keep": to_keep,
-        "thumb_source_video": segments[0]["local_path"],
-        "thumb_seek_sec": min(segments[0]["used_duration"] * 0.25, 15.0),
+        "thumb_source_video": first_seg["local_path"],
+        "thumb_seek_sec": first_seg["start_sec"] + min(first_seg["used_duration"] * 0.25, 15.0),
     }
 
 
@@ -221,7 +243,11 @@ def create_gameplay_video(
     concat_inputs = []
 
     for idx, seg in enumerate(segments):
+        # -i এর আগে -ss দিলে ১ ঘণ্টার ভিডিওতেও ০.০৫ সেকেন্ডে রেনডম অংশে ফ্রেম-সঠিক সিক করে
+        if seg["start_sec"] > 0:
+            cmd.extend(["-ss", f"{seg['start_sec']:.3f}"])
         cmd.extend(["-i", str(seg["local_path"])])
+
         extra = 0.15 if idx == len(segments) - 1 else 0.0
         dur = f"{seg['used_duration'] + extra:.3f}"
         filter_parts.append(
