@@ -71,22 +71,25 @@ def load_supadata_keys() -> list[str]:
     return keys
 
 
+# সেরা ফ্রি মডেল থেকে ক্রমানুসারে সাজানো (সবার আগে ফ্রি সেরাগুলো চেষ্টা করবে)
 DEFAULT_OPENROUTER_MODELS = [
-    # --- #1 প্রিয় ও হাই-কোয়ালিটি মডেল (সবার আগে চেষ্টা করবে) ---
+    # --- Tier 1: Best Free Models (Ranked Best -> Fallback) ---
     "nvidia/nemotron-3-ultra-550b-a55b:free",
-    # --- ব্যাকআপ সেরা ফ্ল্যাগশিপ পেইড মডেল ---
-    "anthropic/claude-sonnet-4.6",
-    "google/gemini-3.1-pro-preview",
-    "deepseek/deepseek-v3.2",
-    "google/gemini-2.5-pro",
-    "openai/gpt-4o-mini",
-    # --- ব্যাকআপ অন্যান্য সচল ফ্রি মডেল ---
-    "baidu/ernie-5.5-flash-preview:free",
-    "nvidia/nemotron-3.5-super-vl:free",
     "google/gemma-4-31b-it:free",
     "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3.5-super-vl:free",
+    "baidu/ernie-5.5-flash-preview:free",
+    "particle-ai/particle-1:free",
+    "inclusionai/ling-3.2-flash:free",
     "nvidia/nemotron-3.5-lightning:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "recursive/flint-v1.0:free",
     "openrouter/free",
+    # --- Tier 2: Emergency Paid Fallback (যদি উপরের সব ফ্রি মডেল ডাউন থাকে) ---
+    "deepseek/deepseek-v3.2",
+    "google/gemini-2.5-pro",
+    "anthropic/claude-sonnet-4.6",
+    "openai/gpt-4o-mini",
 ]
 
 
