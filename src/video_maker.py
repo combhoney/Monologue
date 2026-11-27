@@ -12,16 +12,21 @@ from src.config import (
     BG_LONG_VIDEO_MIN_SEC,
     FFMPEG_CRF,
     FFMPEG_PRESET,
+    MIRROR_BG_VIDEO,
     SUBTITLE_ENABLED,
     VIDEO_FPS,
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
-from src.gdrive_uploader import download_bg_video, list_bg_videos
+from src.gdrive_uploader import (
+    download_bg_video,
+    list_bg_videos,
+    serve_bg_folder_http,
+)
 from src.subtitle_maker import generate_animated_ass_subtitles
 
 
-def _get_video_duration(video_path: Path) -> float:
+def _get_media_duration(target: str) -> float:
     cmd = [
         "ffprobe",
         "-v",
@@ -30,15 +35,15 @@ def _get_video_duration(video_path: Path) -> float:
         "format=duration",
         "-of",
         "json",
-        str(video_path),
+        target,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise RuntimeError(f"ffprobe দিয়ে ভিডিওর ডিউরেশন মাপা যায়নি ({video_path.name}): {proc.stderr}")
+        raise RuntimeError(f"ffprobe দিয়ে ভিডিওর ডিউরেশন মাপা যায়নি: {proc.stderr}")
     data = json.loads(proc.stdout or "{}")
     dur = float((data.get("format") or {}).get("duration", 0.0))
     if dur <= 0:
-        raise RuntimeError(f"ভিডিওটির ডিউরেশন সঠিক নয়: {video_path.name}")
+        raise RuntimeError("ভিডিওটির ডিউরেশন সঠিক নয়।")
     return dur
 
 
@@ -80,16 +85,43 @@ def _prepare_mastered_audio(raw_wav: Path, mastered_wav: Path) -> float:
 
 
 def _choose_random_start_offset(full_dur: float, use_dur: float) -> float:
-    """
-    ১ ঘণ্টা (BG_LONG_VIDEO_MIN_SEC = 3600s) বা তার বেশি সময়ের ভিডিও হলে
-    শুরু থেকে না নিয়ে মাঝের যেকোনো একটি রেনডম সময় থেকে ক্লিপ বেছে নেবে।
-    """
     if full_dur >= BG_LONG_VIDEO_MIN_SEC and (full_dur - use_dur) > 5.0:
         slack = full_dur - use_dur
-        min_start = min(60.0, slack * 0.25)
-        max_start = max(min_start, slack - min(10.0, slack * 0.10))
+        min_start = min(60.0, slack * 0.10)
+        max_start = max(min_start, slack - min(30.0, slack * 0.05))
         return round(random.uniform(min_start, max_start), 2)
     return 0.0
+
+
+def _slice_remote_video_segment(stream_url: str, start_sec: float, use_dur: float, dest_path: Path) -> bool:
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-nostdin",
+        "-ss",
+        f"{start_sec:.3f}",
+        "-i",
+        stream_url,
+        "-t",
+        f"{use_dur + 4.0:.3f}",
+        "-map",
+        "0:v:0",
+        "-an",
+        "-c:v",
+        "copy",
+        "-avoid_negative_ts",
+        "make_zero",
+        str(dest_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0 or not dest_path.exists() or dest_path.stat().st_size < 10_000:
+        return False
+
+    try:
+        sliced_dur = _get_media_duration(str(dest_path))
+        return sliced_dur >= (use_dur * 0.90)
+    except Exception:
+        return False
 
 
 def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path) -> dict:
@@ -102,45 +134,71 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
 
     remaining = audio_duration
     segments: list[dict] = []
-    downloaded_cache: dict[str, tuple[Path, float]] = {}
+    full_duration_map: dict[str, float] = {}
     usage_totals: dict[str, float] = {}
 
-    for idx, item in enumerate(remote_videos):
-        if remaining <= 0.05:
-            break
-        remote_name = item["Name"]
-        safe_local_name = f"bg_{idx:03d}_{Path(remote_name).name}"
-        local_path = bg_tmp_dir / safe_local_name
+    with serve_bg_folder_http() as get_stream_url:
+        for idx, item in enumerate(remote_videos):
+            if remaining <= 0.05:
+                break
+            remote_name = item["Name"]
+            stream_url = get_stream_url(remote_name)
+            safe_local_name = f"bg_{idx:03d}_{Path(remote_name).name}"
+            local_path = bg_tmp_dir / safe_local_name
 
-        download_bg_video(remote_name, local_path)
-        full_dur = _get_video_duration(local_path)
-        if full_dur <= 0.5:
-            print(f"[Video] খুব ছোট/নষ্ট ভিডিও স্কিপ করা হলো: {remote_name} ({full_dur:.2f}s)", flush=True)
-            continue
+            full_dur = 0.0
+            try:
+                full_dur = _get_media_duration(stream_url)
+            except Exception as err:
+                print(f"[Video] স্ট্রিম থেকে ডিউরেশন পড়া যায়নি ({remote_name}): {err}", flush=True)
 
-        use_dur = min(full_dur, remaining)
-        start_sec = _choose_random_start_offset(full_dur, use_dur)
+            if full_dur > 0.5:
+                use_dur = min(full_dur, remaining)
+                start_sec = _choose_random_start_offset(full_dur, use_dur)
+                print(
+                    f"[Video] নির্বাচিত ক্লিপ '{remote_name}' | পূর্ণ দৈর্ঘ্য: {full_dur/60:.1f}m | "
+                    f"রেনডম অংশ: {start_sec/60:.2f}m -> {(start_sec + use_dur)/60:.2f}m ({use_dur:.1f}s)...",
+                    flush=True,
+                )
 
-        segments.append(
-            {
-                "remote_name": remote_name,
-                "local_path": local_path,
-                "start_sec": start_sec,
-                "used_duration": use_dur,
-                "full_duration": full_dur,
-            }
-        )
-        downloaded_cache[remote_name] = (local_path, full_dur)
-        usage_totals[remote_name] = usage_totals.get(remote_name, 0.0) + use_dur
-        remaining -= use_dur
+                sliced_ok = False
+                if full_dur >= BG_LONG_VIDEO_MIN_SEC or use_dur < (full_dur - 15.0):
+                    sliced_ok = _slice_remote_video_segment(stream_url, start_sec, use_dur, local_path)
 
-        end_sec = start_sec + use_dur
-        print(
-            f"[Video] ক্লিপ যুক্ত হলো: '{remote_name}' | মোট দৈর্ঘ্য: {full_dur/60:.1f}m | "
-            f"নেওয়া হয়েছে: {start_sec/60:.2f}m -> {end_sec/60:.2f}m ({use_dur:.1f}s) | "
-            f"বাকি অডিও: {max(0.0, remaining):.1f}s",
-            flush=True,
-        )
+                if sliced_ok:
+                    local_start = 0.0
+                else:
+                    if local_path.exists():
+                        local_path.unlink()
+                    download_bg_video(remote_name, local_path)
+                    local_start = start_sec
+            else:
+                download_bg_video(remote_name, local_path)
+                full_dur = _get_media_duration(str(local_path))
+                if full_dur <= 0.5:
+                    print(f"[Video] খুব ছোট/নষ্ট ভিডিও স্কিপ করা হলো: {remote_name} ({full_dur:.2f}s)", flush=True)
+                    continue
+                use_dur = min(full_dur, remaining)
+                local_start = _choose_random_start_offset(full_dur, use_dur)
+
+            segments.append(
+                {
+                    "remote_name": remote_name,
+                    "local_path": local_path,
+                    "start_sec": local_start,
+                    "used_duration": use_dur,
+                    "full_duration": full_dur,
+                }
+            )
+            full_duration_map[remote_name] = full_dur
+            usage_totals[remote_name] = usage_totals.get(remote_name, 0.0) + use_dur
+            remaining -= use_dur
+
+            print(
+                f"[Video] ক্লিপ প্রস্তুত: '{remote_name}' | ব্যবহৃত: {use_dur:.1f}s | "
+                f"বাকি অডিও: {max(0.0, remaining):.1f}s",
+                flush=True,
+            )
 
     if remaining > 0.5:
         if not ALLOW_BG_LOOP or not segments:
@@ -158,13 +216,13 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
             for seg in base_segments:
                 if remaining <= 0.05:
                     break
-                use_dur = min(seg["full_duration"], remaining)
-                start_sec = _choose_random_start_offset(seg["full_duration"], use_dur)
+                avail_local = _get_media_duration(str(seg["local_path"]))
+                use_dur = min(avail_local, remaining)
                 segments.append(
                     {
                         "remote_name": seg["remote_name"],
                         "local_path": seg["local_path"],
-                        "start_sec": start_sec,
+                        "start_sec": 0.0,
                         "used_duration": use_dur,
                         "full_duration": seg["full_duration"],
                     }
@@ -176,7 +234,7 @@ def _select_and_download_gameplay_clips(audio_duration: float, bg_tmp_dir: Path)
     to_keep: list[dict] = []
 
     for r_name, used_sec in usage_totals.items():
-        _, full_sec = downloaded_cache[r_name]
+        full_sec = full_duration_map[r_name]
         is_fully_used = used_sec >= (full_sec - 0.5)
         is_over_one_min = used_sec > BG_DELETE_THRESHOLD_SEC
 
@@ -234,16 +292,17 @@ def create_gameplay_video(
 
     print(
         f"[Video] FFmpeg দিয়ে ভিডিও তৈরি হচ্ছে: {w}x{h} @ {fps}fps "
-        f"(preset={FFMPEG_PRESET}, crf={FFMPEG_CRF}, subtitles={'ON' if ass_file else 'OFF'})",
+        f"(preset={FFMPEG_PRESET}, crf={FFMPEG_CRF}, mirror={'ON' if MIRROR_BG_VIDEO else 'OFF'}, "
+        f"subtitles={'ON' if ass_file else 'OFF'})",
         flush=True,
     )
 
     cmd = ["ffmpeg", "-y", "-nostdin"]
     filter_parts = []
     concat_inputs = []
+    mirror_filter = ",hflip" if MIRROR_BG_VIDEO else ""
 
     for idx, seg in enumerate(segments):
-        # -i এর আগে -ss দিলে ১ ঘণ্টার ভিডিওতেও ০.০৫ সেকেন্ডে রেনডম অংশে ফ্রেম-সঠিক সিক করে
         if seg["start_sec"] > 0:
             cmd.extend(["-ss", f"{seg['start_sec']:.3f}"])
         cmd.extend(["-i", str(seg["local_path"])])
@@ -253,7 +312,7 @@ def create_gameplay_video(
         filter_parts.append(
             f"[{idx}:v]setpts=PTS-STARTPTS,trim=duration={dur},setpts=PTS-STARTPTS,"
             f"fps={fps},scale={w}:{h}:force_original_aspect_ratio=increase,"
-            f"crop={w}:{h},setsar=1[v{idx}]"
+            f"crop={w}:{h},setsar=1{mirror_filter}[v{idx}]"
         )
         concat_inputs.append(f"[v{idx}]")
 
