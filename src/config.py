@@ -72,14 +72,16 @@ def load_supadata_keys() -> list[str]:
 
 
 DEFAULT_OPENROUTER_MODELS = [
+    # --- Tier 1: Flagship & Ultra-Affordable Paid Models ---
     "anthropic/claude-sonnet-4.6",
     "google/gemini-3.1-pro-preview",
-    "google/gemini-4-neon",
     "deepseek/deepseek-v3.2",
     "google/gemini-2.5-pro",
     "openai/gpt-4o-mini",
+    # --- Tier 2: Verified Active Free Models (Nov 2026) ---
     "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "qwen/qwen3.8-27b:free",
+    "baidu/ernie-5.5-flash-preview:free",
+    "nvidia/nemotron-3.5-super-vl:free",
     "google/gemma-4-31b-it:free",
     "google/gemma-4-26b-a4b-it:free",
     "nvidia/nemotron-3.5-lightning:free",
