@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 LINK_FILE = ROOT_DIR / "Link.txt"
+HISTORY_FILE = ROOT_DIR / "history.json"
 FONTS_DIR = ROOT_DIR / "fonts"
 OUTPUT_DIR = ROOT_DIR / "output"
 MODELS_DIR = ROOT_DIR / "models"
@@ -71,7 +72,6 @@ def load_supadata_keys() -> list[str]:
     return keys
 
 
-# সেরা ফ্রি মডেল থেকে ক্রমানুসারে সাজানো (সবার আগে ফ্রি সেরাগুলো চেষ্টা করবে)
 DEFAULT_OPENROUTER_MODELS = [
     # --- Tier 1: Best Free Models (Ranked Best -> Fallback) ---
     "nvidia/nemotron-3-ultra-550b-a55b:free",
@@ -85,7 +85,7 @@ DEFAULT_OPENROUTER_MODELS = [
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
     "recursive/flint-v1.0:free",
     "openrouter/free",
-    # --- Tier 2: Emergency Paid Fallback (যদি উপরের সব ফ্রি মডেল ডাউন থাকে) ---
+    # --- Tier 2: Emergency Paid Fallback ---
     "deepseek/deepseek-v3.2",
     "google/gemini-2.5-pro",
     "anthropic/claude-sonnet-4.6",
@@ -111,6 +111,12 @@ def load_openrouter_models() -> list[str]:
     return list(DEFAULT_OPENROUTER_MODELS)
 
 
+# --- Channel Most Popular & History Config ---
+SOURCE_CHANNEL_URL = env_str("SOURCE_CHANNEL_URL", "")
+YOUTUBE_API_KEY = env_str("YOUTUBE_API_KEY", "")
+CHANNEL_MAX_SCAN_VIDEOS = env_int("CHANNEL_MAX_SCAN_VIDEOS", 500)
+CHANNEL_MIN_DURATION_SEC = env_int("CHANNEL_MIN_DURATION_SEC", 65)  # ৬৫ সেকেন্ডের কম Shorts বাদ দেবে
+
 # --- Video & Background Gameplay Config ---
 VIDEO_WIDTH = env_int("VIDEO_WIDTH", 1920)
 VIDEO_HEIGHT = env_int("VIDEO_HEIGHT", 1080)
@@ -122,14 +128,14 @@ BG_LONG_VIDEO_MIN_SEC = env_float("BG_LONG_VIDEO_MIN_SEC", 3600.0)
 ALLOW_BG_LOOP = env_bool("ALLOW_BG_LOOP", True)
 MIRROR_BG_VIDEO = env_bool("MIRROR_BG_VIDEO", False)
 
-# --- Subtitle Config (Exact Forced Alignment Word-by-Word Pop-Up) ---
+# --- Subtitle Config ---
 SUBTITLE_ENABLED = env_bool("SUBTITLE_ENABLED", True)
 SUBTITLE_MODEL = env_str("SUBTITLE_MODEL", "base.en")
 SUBTITLE_MAX_WORDS = env_int("SUBTITLE_MAX_WORDS", 1)
 SUBTITLE_FONT_SIZE = env_int("SUBTITLE_FONT_SIZE", 92)
 SUBTITLE_MARGIN_V = env_int("SUBTITLE_MARGIN_V", 135)
 
-# --- Thumbnail Config (80% Blur + Dark Exposure + Single Modern Light Color) ---
+# --- Thumbnail Config ---
 THUMBNAIL_BLUR_RADIUS = env_int("THUMBNAIL_BLUR_RADIUS", 38)
 THUMBNAIL_BRIGHTNESS = env_float("THUMBNAIL_BRIGHTNESS", 0.38)
 
