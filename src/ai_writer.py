@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 import requests
@@ -6,6 +7,20 @@ import requests
 from src.config import load_openrouter_keys, load_openrouter_models
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+NON_CHAT_KEYWORDS = (
+    "embed",
+    "rerank",
+    "lyria",
+    "recraft",
+    "decider",
+    "decision",
+    "span-",
+    "content-safety",
+    "guard",
+    "whisper",
+)
 
 SYSTEM_PROMPT = """You are a skilled International English YouTube Scriptwriter.
 You will receive a raw Hindi (or Hinglish) transcript from a YouTube video.
@@ -37,6 +52,65 @@ Return ONLY valid JSON with these exact keys:
   "tags": ["tag1", "tag2", "..."],
   "script": "..."
 }"""
+
+
+def _fetch_live_free_models() -> list[str]:
+    """
+    OpenRouter-এর পাবলিক API থেকে বর্তমানে সচল থাকা সব :free চ্যাট মডেল ডাইনামিকভাবে নিয়ে আসে,
+    যাতে কোনো পুরোনো মডেল বন্ধ হলেও 404 এরর না আসে।
+    """
+    try:
+        resp = requests.get(OPENROUTER_MODELS_URL, timeout=15)
+        if resp.status_code != 200:
+            return []
+        data = resp.json().get("data") or []
+        live_free: list[str] = []
+        for item in data:
+            mid = str(item.get("id", "")).strip()
+            if not mid.endswith(":free"):
+                continue
+            low = mid.lower()
+            if any(bad in low for bad in NON_CHAT_KEYWORDS):
+                continue
+            arch = item.get("architecture") or {}
+            out_mods = arch.get("output_modalities") or ["text"]
+            if "text" not in out_mods:
+                continue
+            live_free.append(mid)
+        return live_free
+    except Exception:
+        return []
+
+
+def _resolve_model_list(base_models: list[str]) -> list[str]:
+    if os.getenv("OPENROUTER_MODELS", "").strip():
+        return base_models
+
+    live_free = _fetch_live_free_models()
+    if not live_free:
+        return base_models
+
+    live_free_set = set(live_free)
+    resolved: list[str] = []
+
+    for m in base_models:
+        if m == "openrouter/free":
+            continue
+        if m.endswith(":free"):
+            if m in live_free_set and m not in resolved:
+                resolved.append(m)
+        else:
+            if m not in resolved:
+                resolved.append(m)
+
+    # ক্যাটালগে থাকা অন্যান্য নতুন সচল :free মডেলও ব্যাকআপ হিসেবে যোগ করা
+    for lm in live_free:
+        if lm not in resolved:
+            resolved.append(lm)
+
+    resolved.append("openrouter/free")
+    print(f"[AI] লাইভ ক্যাটালগ থেকে {len(live_free)}টি সচল :free মডেল পাওয়া গেছে।", flush=True)
+    return resolved
 
 
 def _extract_json_object(raw_text: str) -> dict:
@@ -79,20 +153,39 @@ class OpenRouterRotator:
         self.api_keys = api_keys
         self.models = models
         self.dead_keys: set[str] = set()
-        self.free_only_keys: set[str] = set()
+        self.zero_balance_keys: set[str] = set()
         self.key_cursor: int = 0
 
     @staticmethod
     def _is_free_model(model_id: str) -> bool:
         return model_id.endswith(":free") or model_id == "openrouter/free"
 
-    def chat_completion(self, messages: list[dict], temperature: float = 0.7, max_tokens: int = 4096) -> str:
+    def _post_chat(self, api_key: str, model: str, messages: list[dict], temperature: float, max_tokens: int):
+        return requests.post(
+            OPENROUTER_API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/youtube-automation",
+                "X-Title": "YouTube Content Automation",
+            },
+            json={
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+            timeout=150,
+        )
+
+    def chat_completion(self, messages: list[dict], temperature: float = 0.7) -> str:
         n_keys = len(self.api_keys)
         errors: list[str] = []
 
         for model_idx, model in enumerate(self.models, start=1):
             is_free_model = self._is_free_model(model)
-            tried_any_key = False
+            # ফ্রি রিজনিং মডেল যেন thinking করতেই টোকেন শেষ না করে, তাই 10000 টোকেন দেওয়া হলো
+            target_max_tokens = 10000 if is_free_model else 4096
 
             for offset in range(n_keys):
                 key_idx = (self.key_cursor + offset) % n_keys
@@ -100,36 +193,33 @@ class OpenRouterRotator:
 
                 if api_key in self.dead_keys:
                     continue
-                if not is_free_model and api_key in self.free_only_keys:
+                if not is_free_model and api_key in self.zero_balance_keys:
                     continue
 
-                tried_any_key = True
                 key_label = f"Key#{key_idx + 1}"
                 print(f"[AI] চেষ্টা চলছে -> Model [{model_idx}/{len(self.models)}]: {model} | {key_label}", flush=True)
 
                 try:
-                    resp = requests.post(
-                        OPENROUTER_API_URL,
-                        headers={
-                            "Authorization": f"Bearer {api_key}",
-                            "Content-Type": "application/json",
-                            "HTTP-Referer": "https://github.com/youtube-automation",
-                            "X-Title": "YouTube Content Automation",
-                        },
-                        json={
-                            "model": model,
-                            "messages": messages,
-                            "temperature": temperature,
-                            "max_tokens": max_tokens,
-                        },
-                        timeout=120,
-                    )
+                    resp = self._post_chat(api_key, model, messages, temperature, target_max_tokens)
                 except requests.RequestException as req_err:
                     msg = f"{model} ({key_label}) নেটওয়ার্ক এরর: {req_err}"
                     print(f"[AI] {msg}", flush=True)
                     errors.append(msg)
                     time.sleep(1.5)
                     continue
+
+                # যদি 402-এ বলে যে কম max_tokens দিয়ে চলবে (যেমন 2666 afford করতে পারে), সাথে সাথে কম টোকেনে রিট্রাই
+                if resp.status_code == 402:
+                    m_afford = re.search(r"can only afford\s+(\d+)", resp.text, re.IGNORECASE)
+                    afford = int(m_afford.group(1)) if m_afford else 0
+                    if afford >= 1800:
+                        reduced_tokens = min(afford - 120, 3200)
+                        print(f"[AI] {key_label} ({model}) max_tokens={reduced_tokens} দিয়ে পুনরায় চেষ্টা করছে...", flush=True)
+                        try:
+                            resp = self._post_chat(api_key, model, messages, temperature, reduced_tokens)
+                        except requests.RequestException as req_err:
+                            errors.append(f"{model} ({key_label}) retry error: {req_err}")
+                            continue
 
                 status = resp.status_code
                 if status == 200:
@@ -144,9 +234,13 @@ class OpenRouterRotator:
                         continue
 
                     choices = payload.get("choices") or []
-                    content = (choices[0].get("message") or {}).get("content", "") if choices else ""
-                    if not content or not content.strip():
-                        errors.append(f"{model} ({key_label}) খালি রেসপন্স")
+                    msg_obj = (choices[0].get("message") or {}) if choices else {}
+                    content = (msg_obj.get("content") or "").strip()
+                    finish_reason = choices[0].get("finish_reason", "") if choices else ""
+
+                    if not content:
+                        errors.append(f"{model} ({key_label}) খালি রেসপন্স (finish_reason={finish_reason})")
+                        print(f"[AI] {model} ({key_label}) খালি রেসপন্স দিয়েছে (finish_reason={finish_reason})।", flush=True)
                         continue
 
                     self.key_cursor = (key_idx + 1) % n_keys
@@ -158,10 +252,15 @@ class OpenRouterRotator:
                     print(f"[AI] {key_label} বাতিল/ভুল ({status})। বাদ দেওয়া হলো।", flush=True)
                     self.dead_keys.add(api_key)
                 elif status == 402:
-                    print(f"[AI] {key_label}-এ পেইড ক্রেডিট নেই (402)। ফ্রি মডেলের জন্য রাখা হলো।", flush=True)
-                    self.free_only_keys.add(api_key)
+                    m_afford = re.search(r"can only afford\s+(\d+)", resp.text, re.IGNORECASE)
+                    afford = int(m_afford.group(1)) if m_afford else -1
+                    if afford == 0 or "never purchased" in resp.text.lower():
+                        print(f"[AI] {key_label}-এ কোনো পেইড ব্যালেন্স নেই (0)। ফ্রি মডেলের জন্য রাখা হলো।", flush=True)
+                        self.zero_balance_keys.add(api_key)
+                    else:
+                        print(f"[AI] {key_label}-এ {model} চালানোর মতো ক্রেডিট কম, পরের সস্তা মডেল দেখা হচ্ছে...", flush=True)
                 elif status == 429:
-                    print(f"[AI] {key_label} রেট-লিমিট (429)। পরের Key চেষ্টা হচ্ছে...", flush=True)
+                    print(f"[AI] {key_label} রেট-লিমিট (429)। পরের Key/মডেল চেষ্টা হচ্ছে...", flush=True)
                     time.sleep(1.0)
                 elif status == 404:
                     print(f"[AI] মডেল {model} পাওয়া যায়নি (404)। পরের মডেলে যাওয়া হচ্ছে...", flush=True)
@@ -173,18 +272,15 @@ class OpenRouterRotator:
 
                 errors.append(f"{model} ({key_label}) -> HTTP {status}: {err_snippet}")
 
-            if not tried_any_key:
-                continue
-
         raise RuntimeError(
             "সব OpenRouter মডেল ও API Key চেষ্টা করেও স্ক্রিপ্ট জেনারেট করা যায়নি!\n"
-            + "\n".join(errors[-10:])
+            + "\n".join(errors[-12:])
         )
 
 
 def generate_monologue_script(hindi_transcript: str, video_id: str) -> dict:
     api_keys = load_openrouter_keys()
-    models = load_openrouter_models()
+    models = _resolve_model_list(load_openrouter_models())
     rotator = OpenRouterRotator(api_keys=api_keys, models=models)
 
     max_chars = 90000
