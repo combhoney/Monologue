@@ -4,16 +4,15 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
-from src.config import FONTS_DIR, THUMBNAIL_BLUR_RADIUS, THUMBNAIL_BRIGHTNESS
+from src.config import FONTS_DIR, MIRROR_BG_VIDEO, THUMBNAIL_BLUR_RADIUS, THUMBNAIL_BRIGHTNESS
 
 THUMB_W = 1280
 THUMB_H = 720
 POPPINS_EXTRABOLD_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-ExtraBold.ttf"
 MONTSERRAT_BOLD_URL = "https://github.com/googlefonts/montserrat/raw/master/fonts/ttf/Montserrat-Bold.ttf"
 
-# মডার্ন এক-কালারের লাইট প্যালেট (ডার্ক ও ব্লার করা ব্যাকগ্রাউন্ডের উপর দারুণ ফুটে উঠবে)
 MODERN_LIGHT_COLORS = [
     ("Snow White", (248, 250, 252)),
     ("Champagne Gold", (253, 230, 138)),
@@ -89,13 +88,13 @@ def _extract_video_cover_frame(video_path: Path, seek_sec: float = 10.0) -> Imag
     x0 = max(0, (new_w - THUMB_W) // 2)
     y0 = max(0, (new_h - THUMB_H) // 2)
     cropped = resized[y0 : y0 + THUMB_H, x0 : x0 + THUMB_W]
-    return Image.fromarray(cropped)
+    img_out = Image.fromarray(cropped)
+    if MIRROR_BG_VIDEO:
+        img_out = ImageOps.mirror(img_out)
+    return img_out
 
 
 def _prepare_dark_blurred_bg(bg: Image.Image) -> Image.Image:
-    """
-    ব্যাকগ্রাউন্ডকে ৮০% ব্লার করে এবং ব্রাইটনেস/এক্সপোজার কমিয়ে ডার্ক করে তোলে।
-    """
     blurred = bg.filter(ImageFilter.GaussianBlur(radius=THUMBNAIL_BLUR_RADIUS))
     darkened = ImageEnhance.Brightness(blurred).enhance(THUMBNAIL_BRIGHTNESS)
     darkened = ImageEnhance.Contrast(darkened).enhance(1.12)
@@ -160,7 +159,6 @@ def create_modern_thumbnail(
             chosen_font = font
             break
 
-    # সফট ডার্ক ড্রপ শ্যাডো
     shadow = Image.new("RGBA", (THUMB_W, THUMB_H), (0, 0, 0, 0))
     ImageDraw.Draw(shadow).multiline_text(
         (THUMB_W // 2 + 5, THUMB_H // 2 + 9),
@@ -174,7 +172,6 @@ def create_modern_thumbnail(
     shadow = shadow.filter(ImageFilter.GaussianBlur(14))
     composed = Image.alpha_composite(base, shadow)
 
-    # এক-কালারের রেনডম মডার্ন লাইট ফন্ট + পরিচ্ছন্ন ডার্ক স্ট্রোক
     ImageDraw.Draw(composed).multiline_text(
         (THUMB_W // 2, THUMB_H // 2),
         text,
