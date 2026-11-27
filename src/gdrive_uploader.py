@@ -2,8 +2,12 @@ import base64
 import json
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
+import time
+import urllib.parse
+import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -70,6 +74,67 @@ def _rclone_session():
         conf_file = Path(tmpdir) / "rclone.conf"
         conf_file.write_text(conf_text, encoding="utf-8")
         yield remote_name, conf_file
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+@contextmanager
+def serve_bg_folder_http():
+    """
+    Google Drive গেমপ্লে ফোল্ডারটিকে লোকাল HTTP রেঞ্জ-রিকোয়েস্ট সার্ভার হিসেবে চালু করে,
+    যাতে ১০-১২ ঘণ্টার (২০-৩০ GB) ভিডিও পুরোটা ডাউনলোড না করেই যেকোনো অংশ কাটা যায়।
+    """
+    bg_folder_id = extract_folder_id(GDRIVE_BG_FOLDER_ID)
+    if not bg_folder_id:
+        raise ValueError("GDRIVE_BG_FOLDER_ID সিক্রেট সেট করা নেই!")
+
+    with _rclone_session() as (remote_name, conf_file):
+        port = _find_free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        cmd = [
+            "rclone",
+            "serve",
+            "http",
+            f"{remote_name}:",
+            "--drive-root-folder-id",
+            bg_folder_id,
+            "--config",
+            str(conf_file),
+            "--addr",
+            f"127.0.0.1:{port}",
+            "--read-only",
+            "--vfs-read-chunk-size",
+            "16M",
+            "--vfs-read-chunk-size-limit",
+            "64M",
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            ready = False
+            for _ in range(40):
+                if proc.poll() is not None:
+                    break
+                try:
+                    with urllib.request.urlopen(base_url, timeout=2):
+                        ready = True
+                        break
+                except Exception:
+                    time.sleep(0.35)
+
+            if not ready:
+                raise RuntimeError("rclone HTTP স্ট্রিম সার্ভার চালু হতে ব্যর্থ হয়েছে।")
+
+            yield lambda fname: f"{base_url}/{urllib.parse.quote(fname)}"
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 def list_bg_videos() -> list[dict]:
