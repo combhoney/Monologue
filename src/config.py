@@ -116,7 +116,7 @@ FFMPEG_CRF = env_int("FFMPEG_CRF", 22)
 BG_DELETE_THRESHOLD_SEC = env_float("BG_DELETE_THRESHOLD_SEC", 60.0)
 BG_LONG_VIDEO_MIN_SEC = env_float("BG_LONG_VIDEO_MIN_SEC", 3600.0)
 ALLOW_BG_LOOP = env_bool("ALLOW_BG_LOOP", True)
-MIRROR_BG_VIDEO = env_bool("MIRROR_BG_VIDEO", True)  # True = বাম <-> ডান মিরর ইফেক্ট চালু থাকবে
+MIRROR_BG_VIDEO = env_bool("MIRROR_BG_VIDEO", False)  # ডিফল্টভাবে বন্ধ থাকবে
 
 # --- Subtitle Config (Exact Forced Alignment Word-by-Word Pop-Up) ---
 SUBTITLE_ENABLED = env_bool("SUBTITLE_ENABLED", True)
