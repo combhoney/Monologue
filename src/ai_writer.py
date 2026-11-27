@@ -55,10 +55,6 @@ Return ONLY valid JSON with these exact keys:
 
 
 def _fetch_live_free_models() -> list[str]:
-    """
-    OpenRouter-এর পাবলিক API থেকে বর্তমানে সচল থাকা সব :free চ্যাট মডেল ডাইনামিকভাবে নিয়ে আসে,
-    যাতে কোনো পুরোনো মডেল বন্ধ হলেও 404 এরর না আসে।
-    """
     try:
         resp = requests.get(OPENROUTER_MODELS_URL, timeout=15)
         if resp.status_code != 200:
@@ -103,7 +99,6 @@ def _resolve_model_list(base_models: list[str]) -> list[str]:
             if m not in resolved:
                 resolved.append(m)
 
-    # ক্যাটালগে থাকা অন্যান্য নতুন সচল :free মডেলও ব্যাকআপ হিসেবে যোগ করা
     for lm in live_free:
         if lm not in resolved:
             resolved.append(lm)
@@ -175,7 +170,7 @@ class OpenRouterRotator:
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             },
-            timeout=150,
+            timeout=180,
         )
 
     def chat_completion(self, messages: list[dict], temperature: float = 0.7) -> str:
@@ -184,7 +179,6 @@ class OpenRouterRotator:
 
         for model_idx, model in enumerate(self.models, start=1):
             is_free_model = self._is_free_model(model)
-            # ফ্রি রিজনিং মডেল যেন thinking করতেই টোকেন শেষ না করে, তাই 10000 টোকেন দেওয়া হলো
             target_max_tokens = 10000 if is_free_model else 4096
 
             for offset in range(n_keys):
@@ -197,80 +191,104 @@ class OpenRouterRotator:
                     continue
 
                 key_label = f"Key#{key_idx + 1}"
-                print(f"[AI] চেষ্টা চলছে -> Model [{model_idx}/{len(self.models)}]: {model} | {key_label}", flush=True)
+                # ১ নম্বর প্রিয় মডেল nemotron-3-ultra হলে সাময়িক 504/429-এ একবার রিট্রাই করবে
+                max_tries = 2 if model_idx == 1 else 1
 
-                try:
-                    resp = self._post_chat(api_key, model, messages, temperature, target_max_tokens)
-                except requests.RequestException as req_err:
-                    msg = f"{model} ({key_label}) নেটওয়ার্ক এরর: {req_err}"
-                    print(f"[AI] {msg}", flush=True)
-                    errors.append(msg)
-                    time.sleep(1.5)
-                    continue
+                for try_num in range(1, max_tries + 1):
+                    print(
+                        f"[AI] চেষ্টা চলছে -> Model [{model_idx}/{len(self.models)}]: {model} | {key_label}",
+                        flush=True,
+                    )
+                    try:
+                        resp = self._post_chat(api_key, model, messages, temperature, target_max_tokens)
+                    except requests.RequestException as req_err:
+                        msg = f"{model} ({key_label}) নেটওয়ার্ক এরর: {req_err}"
+                        print(f"[AI] {msg}", flush=True)
+                        errors.append(msg)
+                        time.sleep(2.0)
+                        continue
 
-                # যদি 402-এ বলে যে কম max_tokens দিয়ে চলবে (যেমন 2666 afford করতে পারে), সাথে সাথে কম টোকেনে রিট্রাই
-                if resp.status_code == 402:
-                    m_afford = re.search(r"can only afford\s+(\d+)", resp.text, re.IGNORECASE)
-                    afford = int(m_afford.group(1)) if m_afford else 0
-                    if afford >= 1800:
-                        reduced_tokens = min(afford - 120, 3200)
-                        print(f"[AI] {key_label} ({model}) max_tokens={reduced_tokens} দিয়ে পুনরায় চেষ্টা করছে...", flush=True)
+                    if resp.status_code == 402:
+                        m_afford = re.search(r"can only afford\s+(\d+)", resp.text, re.IGNORECASE)
+                        afford = int(m_afford.group(1)) if m_afford else 0
+                        if afford >= 1800:
+                            reduced_tokens = min(afford - 120, 3200)
+                            print(
+                                f"[AI] {key_label} ({model}) max_tokens={reduced_tokens} দিয়ে পুনরায় চেষ্টা করছে...",
+                                flush=True,
+                            )
+                            try:
+                                resp = self._post_chat(api_key, model, messages, temperature, reduced_tokens)
+                            except requests.RequestException as req_err:
+                                errors.append(f"{model} ({key_label}) retry error: {req_err}")
+                                continue
+
+                    status = resp.status_code
+                    if status == 200:
                         try:
-                            resp = self._post_chat(api_key, model, messages, temperature, reduced_tokens)
-                        except requests.RequestException as req_err:
-                            errors.append(f"{model} ({key_label}) retry error: {req_err}")
+                            payload = resp.json()
+                        except ValueError:
+                            errors.append(f"{model} ({key_label}) invalid JSON")
                             continue
 
-                status = resp.status_code
-                if status == 200:
-                    try:
-                        payload = resp.json()
-                    except ValueError:
-                        errors.append(f"{model} ({key_label}) invalid JSON")
-                        continue
+                        if "error" in payload:
+                            err_obj = payload["error"]
+                            errors.append(f"{model} ({key_label}) API error: {err_obj}")
+                            if try_num < max_tries:
+                                print(f"[AI] সাময়িক এরর, ৩ সেকেন্ড পর {model} আবার চেষ্টা হচ্ছে...", flush=True)
+                                time.sleep(3.0)
+                                continue
+                            break
 
-                    if "error" in payload:
-                        errors.append(f"{model} ({key_label}) API error: {payload['error']}")
-                        continue
+                        choices = payload.get("choices") or []
+                        msg_obj = (choices[0].get("message") or {}) if choices else {}
+                        content = (msg_obj.get("content") or "").strip()
+                        finish_reason = choices[0].get("finish_reason", "") if choices else ""
 
-                    choices = payload.get("choices") or []
-                    msg_obj = (choices[0].get("message") or {}) if choices else {}
-                    content = (msg_obj.get("content") or "").strip()
-                    finish_reason = choices[0].get("finish_reason", "") if choices else ""
+                        if not content:
+                            errors.append(f"{model} ({key_label}) খালি রেসপন্স (finish_reason={finish_reason})")
+                            print(
+                                f"[AI] {model} ({key_label}) খালি রেসপন্স দিয়েছে (finish_reason={finish_reason})।",
+                                flush=True,
+                            )
+                            if try_num < max_tries:
+                                time.sleep(2.0)
+                                continue
+                            break
 
-                    if not content:
-                        errors.append(f"{model} ({key_label}) খালি রেসপন্স (finish_reason={finish_reason})")
-                        print(f"[AI] {model} ({key_label}) খালি রেসপন্স দিয়েছে (finish_reason={finish_reason})।", flush=True)
-                        continue
+                        self.key_cursor = (key_idx + 1) % n_keys
+                        print(f"[AI] সফল হয়েছে -> {model} ({key_label})", flush=True)
+                        return content
 
-                    self.key_cursor = (key_idx + 1) % n_keys
-                    print(f"[AI] সফল হয়েছে -> {model} ({key_label})", flush=True)
-                    return content
-
-                err_snippet = resp.text[:250].replace("\n", " ")
-                if status in (401, 403):
-                    print(f"[AI] {key_label} বাতিল/ভুল ({status})। বাদ দেওয়া হলো।", flush=True)
-                    self.dead_keys.add(api_key)
-                elif status == 402:
-                    m_afford = re.search(r"can only afford\s+(\d+)", resp.text, re.IGNORECASE)
-                    afford = int(m_afford.group(1)) if m_afford else -1
-                    if afford == 0 or "never purchased" in resp.text.lower():
-                        print(f"[AI] {key_label}-এ কোনো পেইড ব্যালেন্স নেই (0)। ফ্রি মডেলের জন্য রাখা হলো।", flush=True)
-                        self.zero_balance_keys.add(api_key)
+                    err_snippet = resp.text[:250].replace("\n", " ")
+                    if status in (401, 403):
+                        print(f"[AI] {key_label} বাতিল/ভুল ({status})। বাদ দেওয়া হলো।", flush=True)
+                        self.dead_keys.add(api_key)
+                        break
+                    elif status == 402:
+                        m_afford = re.search(r"can only afford\s+(\d+)", resp.text, re.IGNORECASE)
+                        afford = int(m_afford.group(1)) if m_afford else -1
+                        if afford == 0 or "never purchased" in resp.text.lower():
+                            print(f"[AI] {key_label}-এ কোনো পেইড ব্যালেন্স নেই (0)। ফ্রি মডেলের জন্য রাখা হলো।", flush=True)
+                            self.zero_balance_keys.add(api_key)
+                        else:
+                            print(f"[AI] {key_label}-এ {model} চালানোর মতো ক্রেডিট কম, পরের মডেল দেখা হচ্ছে...", flush=True)
+                        errors.append(f"{model} ({key_label}) -> HTTP 402: {err_snippet}")
+                        break
+                    elif status == 404:
+                        print(f"[AI] মডেল {model} পাওয়া যায়নি (404)। পরের মডেলে যাওয়া হচ্ছে...", flush=True)
+                        errors.append(f"{model}: 404 Not Found")
+                        break
                     else:
-                        print(f"[AI] {key_label}-এ {model} চালানোর মতো ক্রেডিট কম, পরের সস্তা মডেল দেখা হচ্ছে...", flush=True)
-                elif status == 429:
-                    print(f"[AI] {key_label} রেট-লিমিট (429)। পরের Key/মডেল চেষ্টা হচ্ছে...", flush=True)
-                    time.sleep(1.0)
-                elif status == 404:
-                    print(f"[AI] মডেল {model} পাওয়া যায়নি (404)। পরের মডেলে যাওয়া হচ্ছে...", flush=True)
-                    errors.append(f"{model}: 404 Not Found")
-                    break
-                else:
-                    print(f"[AI] HTTP {status} ({model} | {key_label}): {err_snippet}", flush=True)
-                    time.sleep(1.0)
+                        print(f"[AI] HTTP {status} ({model} | {key_label}): {err_snippet}", flush=True)
+                        errors.append(f"{model} ({key_label}) -> HTTP {status}: {err_snippet}")
+                        if try_num < max_tries:
+                            time.sleep(3.0)
+                            continue
+                        break
 
-                errors.append(f"{model} ({key_label}) -> HTTP {status}: {err_snippet}")
+                if status == 404:
+                    break
 
         raise RuntimeError(
             "সব OpenRouter মডেল ও API Key চেষ্টা করেও স্ক্রিপ্ট জেনারেট করা যায়নি!\n"
